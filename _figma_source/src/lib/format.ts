@@ -24,6 +24,11 @@ function splitAccountParts(line: string): string[] {
     return dashSeparated
   }
 
+  const commaSeparated = trimmed.split(/\s*,\s*/).map((s) => s.trim())
+  if (commaSeparated.length > 1) {
+    return commaSeparated
+  }
+
   return [trimmed]
 }
 
@@ -57,14 +62,49 @@ export function getDefaultGroupColor(groupName: string): string {
   return PRESET_COLORS[Math.abs(hash) % PRESET_COLORS.length]
 }
 
+function importField(value: unknown): string {
+  return String(value ?? '')
+}
+
+export function formatAccountForImport(
+  account: Partial<Account>,
+  delimiter = '----'
+): string {
+  const provider = account.provider === 'google' ? 'google' : 'microsoft'
+
+  if (provider === 'google') {
+    return [
+      provider,
+      importField(account.邮箱地址),
+      importField(account.密码),
+      importField(account.辅助邮箱),
+      importField(account.两步验证),
+      importField(account.分组 || '默认分组'),
+    ].join(delimiter)
+  }
+
+  return [
+    provider,
+    importField(account.邮箱地址),
+    importField(account.密码),
+    importField(account.client_id),
+    importField(account.刷新令牌),
+    importField(account.令牌过期时间),
+    importField(account.分组 || '默认分组'),
+  ].join(delimiter)
+}
+
 /**
  * Parse text lines into account data.
- * Supports Tab, |, or ---- as delimiter.
+ * Supports Tab, |, ----, or English comma as delimiter.
  * Legacy format:
  *   邮箱地址\t密码\tclient_id\t刷新令牌\t令牌过期时间\t分组
  * Provider-aware format:
  *   provider\t邮箱地址\t密码\t辅助邮箱\t2FA\tclient_id\t刷新令牌\t令牌过期时间\t分组
+ * Provider-aware compact Microsoft format:
+ *   microsoft\t邮箱地址\t密码\tclient_id\t刷新令牌\t令牌过期时间\t分组
  * Gmail compact inventory format:
+ *   google|邮箱地址|密码|辅助邮箱|2FA|分组
  *   邮箱地址|密码|辅助邮箱|2FA
  */
 export function parseTextToAccounts(
@@ -91,23 +131,32 @@ export function parseTextToAccounts(
 
       const compactGoogleInventory =
         provider === 'google' && parts.length <= 6
+      const compactMicrosoftOauth =
+        provider === 'microsoft' && parts.length <= 7
 
       accounts.push({
         provider,
         邮箱地址: accountEmail,
         密码: parts[2] || '',
-        辅助邮箱: parts[3] || '',
-        两步验证: parts[4] || '',
-        client_id: compactGoogleInventory ? '' : parts[5] || '',
-        刷新令牌: compactGoogleInventory ? '' : parts[6] || '',
-        令牌过期时间: compactGoogleInventory ? '' : parts[7] || '',
-        分组: compactGoogleInventory ? parts[5] || '默认分组' : parts[8] || '默认分组',
+        辅助邮箱: compactMicrosoftOauth ? '' : parts[3] || '',
+        两步验证: compactMicrosoftOauth ? '' : parts[4] || '',
+        client_id:
+          compactGoogleInventory ? '' : compactMicrosoftOauth ? parts[3] || '' : parts[5] || '',
+        刷新令牌:
+          compactGoogleInventory ? '' : compactMicrosoftOauth ? parts[4] || '' : parts[6] || '',
+        令牌过期时间:
+          compactGoogleInventory ? '' : compactMicrosoftOauth ? parts[5] || '' : parts[7] || '',
+        分组: compactGoogleInventory
+          ? parts[5] || '默认分组'
+          : compactMicrosoftOauth
+          ? parts[6] || '默认分组'
+          : parts[8] || '默认分组',
         oauth_status:
           provider === 'google'
             ? compactGoogleInventory || !(parts[6] || '').trim()
               ? 'not_connected'
               : 'connected'
-            : (parts[6] || '').trim()
+            : (compactMicrosoftOauth ? parts[4] || '' : parts[6] || '').trim()
             ? 'connected'
             : 'not_connected',
         令牌类型:

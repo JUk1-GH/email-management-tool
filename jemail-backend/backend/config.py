@@ -17,6 +17,9 @@ class Settings:
     http_timeout: int
     mail_fetch_limit: int
     auth_session_ttl_days: int
+    login_max_failed_attempts: int
+    login_rate_window_minutes: int
+    login_lockout_minutes: int
     live_token_url: str
     microsoft_token_url: str
     graph_base_url: str
@@ -27,6 +30,9 @@ class Settings:
     google_token_url: str
     gmail_api_base_url: str
     google_state_secret: str
+    turnstile_site_key: str
+    turnstile_secret_key: str
+    turnstile_verify_url: str
 
 
 def load_env_file() -> None:
@@ -68,6 +74,9 @@ def load_settings() -> Settings:
         http_timeout=int(os.environ.get("JEMAIL_HTTP_TIMEOUT", "20")),
         mail_fetch_limit=int(os.environ.get("JEMAIL_MAIL_FETCH_LIMIT", "20")),
         auth_session_ttl_days=int(os.environ.get("JEMAIL_AUTH_SESSION_TTL_DAYS", "30")),
+        login_max_failed_attempts=int(os.environ.get("JEMAIL_LOGIN_MAX_FAILED_ATTEMPTS", "5")),
+        login_rate_window_minutes=int(os.environ.get("JEMAIL_LOGIN_RATE_WINDOW_MINUTES", "15")),
+        login_lockout_minutes=int(os.environ.get("JEMAIL_LOGIN_LOCKOUT_MINUTES", "15")),
         live_token_url=os.environ.get("JEMAIL_LIVE_TOKEN_URL", "https://login.live.com/oauth20_token.srf"),
         microsoft_token_url=os.environ.get(
             "JEMAIL_MS_TOKEN_URL",
@@ -90,4 +99,10 @@ def load_settings() -> Settings:
             "https://gmail.googleapis.com/gmail/v1",
         ).strip(),
         google_state_secret=os.environ.get("JEMAIL_GOOGLE_STATE_SECRET", "").strip(),
+        turnstile_site_key=os.environ.get("JEMAIL_TURNSTILE_SITE_KEY", "").strip(),
+        turnstile_secret_key=os.environ.get("JEMAIL_TURNSTILE_SECRET_KEY", "").strip(),
+        turnstile_verify_url=os.environ.get(
+            "JEMAIL_TURNSTILE_VERIFY_URL",
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+        ).strip(),
     )

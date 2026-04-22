@@ -99,6 +99,7 @@ class RegisterRequest:
     email: str
     password: str
     display_name: str = ""
+    captcha_token: str = ""
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any] | None) -> "RegisterRequest":
@@ -106,26 +107,34 @@ class RegisterRequest:
         email = str(payload.get("email", "")).strip().lower()
         password = str(payload.get("password", ""))
         display_name = str(payload.get("display_name", "")).strip()
+        captcha_token = str(payload.get("captcha_token", "")).strip()
         if not email:
             raise AppError("缺少注册邮箱", "invalid", 400)
         if not password:
             raise AppError("缺少注册密码", "invalid", 400)
-        return cls(email=email, password=password, display_name=display_name)
+        return cls(
+            email=email,
+            password=password,
+            display_name=display_name,
+            captcha_token=captcha_token,
+        )
 
 
 @dataclass(frozen=True)
 class LoginRequest:
     email: str
     password: str
+    captcha_token: str = ""
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any] | None) -> "LoginRequest":
         payload = payload or {}
         email = str(payload.get("email", "")).strip().lower()
         password = str(payload.get("password", ""))
+        captcha_token = str(payload.get("captcha_token", "")).strip()
         if not email or not password:
             raise AppError("缺少邮箱或密码", "invalid", 400)
-        return cls(email=email, password=password)
+        return cls(email=email, password=password, captcha_token=captcha_token)
 
 
 @dataclass(frozen=True)

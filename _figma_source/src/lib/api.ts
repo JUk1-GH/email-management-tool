@@ -1,6 +1,7 @@
 import { API_BASE } from './config'
 import type {
   AuthResponse,
+  AuthSecurityConfig,
   CloudAccountsResponse,
   CloudSecretsSyncResponse,
   CloudSecretsUnlockResponse,
@@ -16,19 +17,16 @@ import type {
 export const AUTH_TOKEN_STORAGE_KEY = 'jemail.auth.token'
 
 export function getStoredAuthToken(): string {
-  try {
-    return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || ''
-  } catch {
-    return ''
-  }
+  return ''
 }
 
 export function setStoredAuthToken(token: string): void {
-  if (!token) {
+  void token
+  try {
     localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
-    return
+  } catch {
+    // Ignore storage access errors. Auth now uses HttpOnly cookies.
   }
-  localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token)
 }
 
 function buildJsonHeaders(includeAuth = false): HeadersInit {
@@ -107,6 +105,7 @@ async function requestAuth(
   const response = await fetch(`${API_BASE}${path}`, {
     method,
     headers: buildJsonHeaders(false),
+    credentials: 'include',
     body: method === 'GET' ? undefined : JSON.stringify(body || {}),
   })
   const parsed = await parseApiResponse(response)
@@ -121,26 +120,48 @@ async function requestAuth(
 export async function registerWithEmail(
   email: string,
   password: string,
-  displayName = ''
+  displayName = '',
+  captchaToken = ''
 ): Promise<AuthResponse> {
   return requestAuth('/api/auth/register', {
     email,
     password,
     display_name: displayName,
+    captcha_token: captchaToken,
   })
 }
 
 export async function loginWithEmail(
   email: string,
-  password: string
+  password: string,
+  captchaToken = ''
 ): Promise<AuthResponse> {
-  return requestAuth('/api/auth/login', { email, password })
+  return requestAuth('/api/auth/login', {
+    email,
+    password,
+    captcha_token: captchaToken,
+  })
+}
+
+export async function fetchAuthSecurityConfig(): Promise<AuthSecurityConfig> {
+  const response = await fetch(`${API_BASE}/api/auth/security-config`, {
+    method: 'GET',
+    credentials: 'include',
+  })
+  const parsed = await parseApiResponse(response)
+
+  if (!response.ok || !parsed.isJson || !parsed.data) {
+    throw new Error(formatApiErrorMessage(parsed.data, parsed.text, '获取安全配置失败'))
+  }
+
+  return parsed.data as AuthSecurityConfig
 }
 
 export async function fetchCurrentUser(): Promise<AuthResponse> {
   const response = await fetch(`${API_BASE}/api/auth/me`, {
     method: 'GET',
     headers: buildJsonHeaders(true),
+    credentials: 'include',
   })
   const parsed = await parseApiResponse(response)
 
@@ -155,6 +176,7 @@ export async function logoutCurrentUser(): Promise<void> {
   const response = await fetch(`${API_BASE}/api/auth/logout`, {
     method: 'POST',
     headers: buildJsonHeaders(true),
+    credentials: 'include',
   })
   const parsed = await parseApiResponse(response)
 
@@ -167,6 +189,7 @@ export async function fetchCloudAccounts(): Promise<CloudAccountsResponse> {
   const response = await fetch(`${API_BASE}/api/cloud/accounts`, {
     method: 'GET',
     headers: buildJsonHeaders(true),
+    credentials: 'include',
   })
   const parsed = await parseApiResponse(response)
 
@@ -184,6 +207,7 @@ export async function syncCloudAccounts(
   const response = await fetch(`${API_BASE}/api/cloud/accounts/sync`, {
     method: 'POST',
     headers: buildJsonHeaders(true),
+    credentials: 'include',
     body: JSON.stringify({
       accounts,
       replace_missing: replaceMissing,
@@ -204,6 +228,7 @@ export async function syncCloudSecrets(
   const response = await fetch(`${API_BASE}/api/cloud/secrets/sync`, {
     method: 'POST',
     headers: buildJsonHeaders(true),
+    credentials: 'include',
     body: JSON.stringify({
       accounts,
     }),
@@ -223,6 +248,7 @@ export async function unlockCloudSecrets(
   const response = await fetch(`${API_BASE}/api/cloud/secrets/unlock`, {
     method: 'POST',
     headers: buildJsonHeaders(true),
+    credentials: 'include',
     body: JSON.stringify({
       emails,
     }),
@@ -359,6 +385,7 @@ export async function generateTwoFactorCode(
   const response = await fetch(`${API_BASE}/api/twofa/code`, {
     method: 'POST',
     headers: buildJsonHeaders(true),
+    credentials: 'include',
     body: JSON.stringify({
       email_address: emailAddress,
       twofa_secret: twofaSecret,

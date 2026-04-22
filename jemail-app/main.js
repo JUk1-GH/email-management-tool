@@ -44,7 +44,7 @@ const app = createApp({
                     }
                 }
             },
-            
+
             // 邮件相关
             emailDialogVisible: false,
             currentEmail: '',
@@ -53,15 +53,15 @@ const app = createApp({
             filteredEmails: [],
             emailSearch: '',
             emailsLoading: false,
-            
+
             // 邮件详情
             emailDetailVisible: false,
             currentEmailDetail: null,
-            
+
             // 分组设置
             groupDialogVisible: false,
             selectedGroupName: '',
-            
+
             // 新增分组
             addGroupDialogVisible: false,
             newGroupName: '',
@@ -71,14 +71,14 @@ const app = createApp({
                 '#ff69b4', '#ba55d3', '#20b2aa', '#ff8c00', '#dc143c',
                 '#32cd32', '#1e90ff', '#ff1493', '#00ced1', '#ffa500'
             ],
-            
+
             // 删除分组
             deleteGroupDialogVisible: false,
             deleteGroupNames: [],
-            
+
             // 分组颜色映射
             groupColors: {},
-            
+
             // 导入相关
             importDialogVisible: false,
             importMethod: 'text',
@@ -93,113 +93,341 @@ const app = createApp({
             permissionDetectTotal: 0,
         };
     },
-    
+
     computed: {
         groupsForDelete() {
             return this.groups.filter(g => g.name !== '默认分组');
+        },
+        sanitizedCurrentEmailBody() {
+            const email = this.currentEmailDetail || {};
+            const rawBody = email.body || email.body_html || email.body_preview || '';
+            return this.buildSafeEmailDocument(rawBody);
         },
         importTextLineCount() {
             if (!this.importText) return 0;
             return this.importText.trim().split('\n').filter(line => line.trim()).length;
         }
     },
-    
+
     async mounted() {
-        console.log('========== 开始初始化应用 ==========');
-        
         // 初始化浏览器本地数据库
         try {
             await localDB.init();
-            console.log('✅ 浏览器本地数据库初始化成功');
-            console.log('💾 数据存储在您的浏览器本地，不会上传到服务器');
         } catch (error) {
             console.error('❌ 数据库初始化失败:', error);
             ElMessage.error('数据库初始化失败: ' + error.message);
             return;
         }
-        
+
         this.loadGroupColorsFromStorage();
         await this.init();
-        
-        console.log('========== 应用初始化完成 ==========');
     },
-    
+
     methods: {
         // ==================== 初始化 ====================
         async init() {
             await this.loadGroups();
             await this.loadAccounts();
         },
-        
+
+        // ==================== 数据规范化与安全渲染 ====================
+        isKnownProvider(provider) {
+            return ['microsoft', 'google'].includes(String(provider || '').trim().toLowerCase());
+        },
+
+        inferProviderFromEmail(email) {
+            const domain = String(email || '').trim().toLowerCase().split('@').pop() || '';
+            return ['gmail.com', 'googlemail.com'].includes(domain) ? 'google' : 'microsoft';
+        },
+
+        normalizeProvider(provider, email) {
+            const normalized = String(provider || '').trim().toLowerCase();
+            if (this.isKnownProvider(normalized)) {
+                return normalized;
+            }
+            return this.inferProviderFromEmail(email);
+        },
+
+        normalizeAccountRecord(account) {
+            const email = account?.邮箱地址 || account?.email_address || '';
+            return {
+                ...account,
+                provider: this.normalizeProvider(account?.provider, email)
+            };
+        },
+
+        createAccountRecord({ email, password = '', clientId = '', refreshToken = '', tokenExpiresAt = '', group = '', provider = '' }) {
+            return this.normalizeAccountRecord({
+                邮箱地址: email,
+                密码: password,
+                client_id: clientId,
+                刷新令牌: refreshToken,
+                令牌过期时间: tokenExpiresAt,
+                分组: group || '默认分组',
+                provider
+            });
+        },
+
+        isBlockedRefreshToken(refreshToken) {
+            return ['封禁', '锁定', '过期', '无效'].includes(String(refreshToken || '').trim());
+        },
+
+        escapeHtml(value) {
+            return String(value || '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            })[char]);
+        },
+
+        looksLikeHtml(value) {
+            return /<\/?[a-z][\s\S]*>/i.test(String(value || ''));
+        },
+
+        decodeHtmlEntities(value) {
+            const textarea = document.createElement('textarea');
+            textarea.innerHTML = String(value || '');
+            return textarea.value;
+        },
+
+        isDangerousEmailUrl(value) {
+            const decoded = this.decodeHtmlEntities(value).trim();
+            const compact = decoded.replace(/[\u0000-\u001F\u007F\s]+/g, '').toLowerCase();
+            if (!compact) return false;
+            if (compact.startsWith('javascript:') || compact.startsWith('vbscript:') || compact.startsWith('file:')) {
+                return true;
+            }
+            if (compact.startsWith('data:')) {
+                return !/^data:image\/(png|jpe?g|gif|webp|bmp|avif);/i.test(compact);
+            }
+            return false;
+        },
+
+        isUrlAttribute(attrName) {
+            return [
+                'href',
+                'src',
+                'xlink:href',
+                'action',
+                'formaction',
+                'poster',
+                'background'
+            ].includes(attrName);
+        },
+
+        sanitizeInlineStyle(value) {
+            const decoded = this.decodeHtmlEntities(value);
+            if (/expression\s*\(|behavior\s*:|-moz-binding/i.test(decoded)) {
+                return '';
+            }
+            return decoded.replace(/url\(([^)]*)\)/gi, (match, rawUrl) => {
+                const unquoted = rawUrl.trim().replace(/^['"]|['"]$/g, '');
+                return this.isDangerousEmailUrl(unquoted) ? 'url(about:blank)' : match;
+            });
+        },
+
+        sanitizeEmailHtml(rawHtml) {
+            const raw = String(rawHtml || '');
+            if (!raw.trim()) return '';
+            if (!this.looksLikeHtml(raw)) {
+                return this.escapeHtml(raw).replace(/\r\n|\n|\r/g, '<br>');
+            }
+
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(raw, 'text/html');
+            const dangerousTags = [
+                'script',
+                'iframe',
+                'object',
+                'embed',
+                'form',
+                'meta',
+                'link',
+                'base',
+                'frame',
+                'frameset',
+                'applet',
+                'style'
+            ];
+
+            dangerousTags.forEach(tag => {
+                doc.querySelectorAll(tag).forEach(node => node.remove());
+            });
+
+            doc.body.querySelectorAll('*').forEach(element => {
+                Array.from(element.attributes).forEach(attribute => {
+                    const attrName = attribute.name.toLowerCase();
+                    const attrValue = attribute.value || '';
+
+                    if (attrName.startsWith('on') || attrName === 'srcdoc') {
+                        element.removeAttribute(attribute.name);
+                        return;
+                    }
+
+                    if (attrName === 'style') {
+                        const sanitizedStyle = this.sanitizeInlineStyle(attrValue);
+                        if (sanitizedStyle) {
+                            element.setAttribute(attribute.name, sanitizedStyle);
+                        } else {
+                            element.removeAttribute(attribute.name);
+                        }
+                        return;
+                    }
+
+                    if (this.isUrlAttribute(attrName) && this.isDangerousEmailUrl(attrValue)) {
+                        element.removeAttribute(attribute.name);
+                    }
+                });
+
+                if (element.tagName.toLowerCase() === 'a') {
+                    element.setAttribute('target', '_blank');
+                    element.setAttribute('rel', 'noopener noreferrer');
+                }
+            });
+
+            return doc.body.innerHTML;
+        },
+
+        buildSafeEmailDocument(rawHtml) {
+            const sanitizedBody = this.sanitizeEmailHtml(rawHtml);
+            return `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; img-src http: https: data: cid: blob:; style-src 'unsafe-inline'; font-src data: https:;">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #1e293b;
+            background: #ffffff;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        img {
+            max-width: 100% !important;
+            height: auto !important;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        img[src=""],
+        img:not([src]),
+        img[src*="cid:"],
+        img[width="1"],
+        img[height="1"],
+        img[src^="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP"] {
+            display: none !important;
+            visibility: hidden !important;
+            width: 0 !important;
+            height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            opacity: 0 !important;
+        }
+        a {
+            color: #0078d4;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        table {
+            border-collapse: collapse;
+            max-width: 100%;
+            width: 100%;
+        }
+        table td,
+        table th {
+            padding: 8px;
+            vertical-align: top;
+        }
+        * {
+            max-width: 100%;
+            box-sizing: border-box;
+        }
+        [width] {
+            width: auto !important;
+            max-width: 100% !important;
+        }
+        p {
+            margin: 0 0 12px 0;
+        }
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6 {
+            margin: 16px 0 12px 0;
+            line-height: 1.3;
+        }
+    </style>
+</head>
+<body>${sanitizedBody}</body>
+</html>`;
+        },
+
         // ==================== 账号管理 ====================
         async loadAccounts() {
-            console.log('---------- 开始加载账号 ----------');
             this.loading = true;
             try {
                 // 从浏览器本地数据库读取所有账号
-                console.log('正在从 IndexedDB 读取账号...');
-                let allAccounts = await localDB.getAllAccounts();
-                console.log(`✅ 从数据库读取到 ${allAccounts.length} 个账号`);
-                
-                if (allAccounts.length > 0) {
-                    console.log('第一个账号示例:', allAccounts[0]);
-                }
-                
+                let allAccounts = (await localDB.getAllAccounts()).map(account => this.normalizeAccountRecord(account));
+
                 // 筛选分组
                 if (this.selectedGroup && this.selectedGroup !== '全部') {
-                    console.log(`筛选分组: ${this.selectedGroup}`);
-                    allAccounts = allAccounts.filter(acc => 
+                    allAccounts = allAccounts.filter(acc =>
                         (acc.分组 || '默认分组') === this.selectedGroup
                     );
-                    console.log(`筛选后剩余 ${allAccounts.length} 个账号`);
                 }
-                
+
                 // 搜索过滤
                 if (this.search) {
-                    console.log(`搜索关键词: ${this.search}`);
                     const keyword = this.search.toLowerCase();
-                    allAccounts = allAccounts.filter(acc => 
+                    allAccounts = allAccounts.filter(acc =>
                         acc.邮箱地址 && acc.邮箱地址.toLowerCase().includes(keyword)
                     );
-                    console.log(`搜索后剩余 ${allAccounts.length} 个账号`);
                 }
-                
+
                 // 总数
                 this.total = allAccounts.length;
-                console.log(`总账号数: ${this.total}`);
-                
+
                 // 分页
                 const start = (this.currentPage - 1) * this.pageSize;
                 const end = start + this.pageSize;
                 this.accounts = allAccounts.slice(start, end);
-                console.log(`当前页显示 ${this.accounts.length} 个账号 (第${this.currentPage}页, 每页${this.pageSize}条)`);
-                console.log('当前页账号数据:', this.accounts);
-                
+
             } catch (error) {
                 console.error('❌ 加载账号失败:', error);
                 ElMessage.error('加载账号失败: ' + error.message);
             } finally {
                 this.loading = false;
-                console.log('---------- 加载账号完成 ----------');
             }
         },
-        
+
         async loadGroups() {
             try {
                 // 从浏览器本地数据库获取所有分组
                 const groupNames = await localDB.getAllGroups();
                 const groupCounts = await localDB.getGroupCounts();
-                
+
                 const dbGroups = groupNames.map(name => ({
                     name: name,
                     color: this.groupColors[name] || this.getDefaultGroupColor(name),
                     count: groupCounts[name] || 0
                 }));
-                
+
                 // 合并自定义分组（从 localStorage）
                 const customGroups = this.getCustomGroups();
                 const allGroupNames = new Set(dbGroups.map(g => g.name));
-                
+
                 customGroups.forEach(cg => {
                     if (!allGroupNames.has(cg.name)) {
                         dbGroups.push({
@@ -209,13 +437,13 @@ const app = createApp({
                         });
                     }
                 });
-                
+
                 this.groups = dbGroups;
             } catch (error) {
                 console.error('加载分组失败:', error);
             }
         },
-        
+
         loadGroupColorsFromStorage() {
             const saved = localStorage.getItem('groupColors');
             if (saved) {
@@ -226,11 +454,11 @@ const app = createApp({
                 }
             }
         },
-        
+
         saveGroupColorsToStorage() {
             localStorage.setItem('groupColors', JSON.stringify(this.groupColors));
         },
-        
+
         getCustomGroups() {
             const saved = localStorage.getItem('customGroups');
             if (saved) {
@@ -242,7 +470,7 @@ const app = createApp({
             }
             return [];
         },
-        
+
         saveCustomGroup(name, color) {
             const customGroups = this.getCustomGroups();
             if (!customGroups.find(g => g.name === name)) {
@@ -250,13 +478,13 @@ const app = createApp({
                 localStorage.setItem('customGroups', JSON.stringify(customGroups));
             }
         },
-        
+
         removeCustomGroup(name) {
             const customGroups = this.getCustomGroups();
             const filtered = customGroups.filter(g => g.name !== name);
             localStorage.setItem('customGroups', JSON.stringify(filtered));
         },
-        
+
         getDefaultGroupColor(groupName) {
             // 根据分组名生成默认颜色
             const colors = this.presetColors;
@@ -266,13 +494,13 @@ const app = createApp({
             }
             return colors[Math.abs(hash) % colors.length];
         },
-        
+
         getGroupColor(groupName) {
             if (!groupName) groupName = '默认分组';
             const group = this.groups.find(g => g.name === groupName);
             return group ? group.color : this.getDefaultGroupColor(groupName);
         },
-        
+
         handleSearch() {
             // 防抖搜索
             clearTimeout(this.searchTimer);
@@ -281,21 +509,21 @@ const app = createApp({
                 this.loadAccounts();
             }, 500);
         },
-        
+
         handleGroupChange() {
             this.currentPage = 1;
             this.loadAccounts();
         },
-        
+
         handlePageSizeChange() {
             this.currentPage = 1;
             this.loadAccounts();
         },
-        
+
         handleSelectionChange(selection) {
             this.selectedAccounts = selection;
         },
-        
+
         // ==================== 导入 ====================
         openImportDialog() {
             this.importDialogVisible = true;
@@ -307,25 +535,40 @@ const app = createApp({
                 this.$refs.uploadRef.clearFiles();
             }
         },
-        
+
         // 文件选择变化
         handleFileChange(file, fileList) {
-            console.log('文件选择变化:', file);
             this.selectedFile = file.raw;
         },
-        
+
+        getProviderFromTextParts(parts, email) {
+            if (parts[6]) {
+                return this.normalizeProvider(parts[6], email);
+            }
+            if (parts.length === 5 && this.isKnownProvider(parts[4])) {
+                return this.normalizeProvider(parts[4], email);
+            }
+            return this.normalizeProvider('', email);
+        },
+
+        getTokenExpiryFromTextParts(parts) {
+            if (parts.length === 5 && this.isKnownProvider(parts[4])) {
+                return '';
+            }
+            return parts[4] || '';
+        },
+
         // 解析文本行为账号数据（提取公共逻辑）
         parseTextToAccounts(text) {
             const lines = text.trim().split('\n');
-            console.log(`总行数: ${lines.length}`);
             const accounts = [];
-            
+
             for (const line of lines) {
                 const trimmed = line.trim();
                 if (!trimmed) continue;
-                
+
                 let parts = [];
-                
+
                 // 判断分隔符：优先Tab，其次----
                 if (trimmed.includes('\t')) {
                     parts = trimmed.split('\t').map(s => s.trim());
@@ -334,34 +577,29 @@ const app = createApp({
                 } else {
                     parts = [trimmed];
                 }
-                
+
                 const email = parts[0] || '';
                 if (!email || !email.includes('@')) {
-                    console.log('跳过无效邮箱:', email);
                     continue;
                 }
-                
-                const account = {
-                    邮箱地址: email,
-                    密码: parts[1] || '',
-                    client_id: parts[2] || '',
-                    刷新令牌: parts[3] || '',
-                    令牌过期时间: parts[4] || '',
-                    分组: parts[5] || '默认分组'
-                };
-                
+
+                const account = this.createAccountRecord({
+                    email,
+                    password: parts[1] || '',
+                    clientId: parts[2] || '',
+                    refreshToken: parts[3] || '',
+                    tokenExpiresAt: this.getTokenExpiryFromTextParts(parts),
+                    group: parts[5] || '默认分组',
+                    provider: this.getProviderFromTextParts(parts, email)
+                });
+
                 accounts.push(account);
             }
-            
+
             return accounts;
         },
-        
+
         async handleImport(isOverwrite = false) {
-            console.log('========== handleImport 被调用 ==========');
-            console.log('isOverwrite:', isOverwrite);
-            console.log('importMethod:', this.importMethod);
-            console.log('importText:', this.importText);
-            
             // 如果是覆盖导入，显示确认对话框
             if (isOverwrite) {
                 try {
@@ -380,61 +618,45 @@ const app = createApp({
                     return;
                 }
             }
-            
+
             if (this.importMethod === 'text') {
                 await this.importFromText(isOverwrite);
             } else {
                 await this.importFromFile(isOverwrite);
             }
         },
-        
+
         async importFromText(isOverwrite = false) {
-            console.log('========== 开始导入账号 ==========');
-            console.log('importText 原始值:', this.importText);
-            console.log('importText 长度:', this.importText ? this.importText.length : 0);
-            
             if (!this.importText || !this.importText.trim()) {
-                console.log('❌ importText 为空，停止导入');
                 ElMessage.warning('请在"文本导入"标签页中粘贴账号信息后再点击导入！');
                 return;
             }
-            
+
             this.importing = true;
             try {
                 // 使用公共解析方法
                 const accounts = this.parseTextToAccounts(this.importText);
-                
-                console.log(`解析出 ${accounts.length} 个有效账号`);
-                if (accounts.length > 0) {
-                    console.log('第一个账号示例:', accounts[0]);
-                }
-                
+
                 if (accounts.length === 0) {
                     ElMessage.warning('未解析到有效的账号信息');
                     return;
                 }
-                
+
                 // 如果是覆盖导入，先清空
                 if (isOverwrite) {
-                    console.log('覆盖模式：清空现有数据');
                     await localDB.clearAll();
                 }
-                
+
                 // 导入到浏览器本地数据库（立即完成，不等待权限检测）
-                console.log('开始写入 IndexedDB...');
                 const result = await localDB.addAccounts(accounts);
-                console.log('写入结果:', result);
 
                 ElMessage.success(`成功导入 ${result.success} 个账号`);
                 this.importDialogVisible = false;
 
-                console.log('刷新账号列表...');
                 await this.loadAccounts();
                 await this.loadGroups();
-                console.log('========== 导入完成 ==========');
 
                 // 不再自动检测权限，等用户点击"查看"时再检测
-                // console.log('开始后台权限检测...');
                 // this.batchDetectPermissions(accounts);
             } catch (error) {
                 console.error('❌ 导入失败:', error);
@@ -443,60 +665,46 @@ const app = createApp({
                 this.importing = false;
             }
         },
-        
+
         async importFromFile(isOverwrite = false) {
-            console.log('========== 开始文件导入 ==========');
-            
             // 使用存储的文件
             if (!this.selectedFile) {
                 ElMessage.warning('请先选择要导入的文件');
                 return;
             }
-            
+
             const file = this.selectedFile;
-            console.log('文件名:', file.name);
-            console.log('文件大小:', file.size);
-            console.log('文件类型:', file.type);
-            
+
             this.importing = true;
-            
+
             try {
                 let accounts = [];
-                
+
                 // 判断文件类型
                 const fileName = file.name.toLowerCase();
                 if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
                     // Excel 文件：前端直接解析（使用 SheetJS）
-                    console.log('检测到 Excel 文件，前端解析...');
                     accounts = await this.parseExcelFile(file);
-                    console.log(`Excel解析完成，共 ${accounts.length} 个账号`);
                 } else {
                     // TXT 文件：前端直接解析
-                    console.log('检测到 TXT 文件，前端直接解析...');
                     const text = await this.readFileAsText(file);
-                    console.log('文件内容长度:', text.length);
-                    
+
                     // 使用公共解析方法
                     accounts = this.parseTextToAccounts(text);
                 }
-                
-                console.log(`解析出 ${accounts.length} 个有效账号`);
-                
+
                 if (accounts.length === 0) {
                     ElMessage.warning('文件中未找到有效的账号信息');
                     return;
                 }
-                
+
                 // 如果是覆盖导入，先清空
                 if (isOverwrite) {
-                    console.log('覆盖模式：清空现有数据');
                     await localDB.clearAll();
                 }
-                
+
                 // 导入到浏览器本地数据库（立即完成，不等待权限检测）
-                console.log('开始写入 IndexedDB...');
                 const result = await localDB.addAccounts(accounts);
-                console.log('写入结果:', result);
 
                 ElMessage.success(`成功导入 ${result.success} 个账号`);
                 this.importDialogVisible = false;
@@ -507,13 +715,10 @@ const app = createApp({
                 }
                 this.selectedFile = null;
 
-                console.log('刷新账号列表...');
                 await this.loadAccounts();
                 await this.loadGroups();
-                console.log('========== 文件导入完成 ==========');
 
                 // 不再自动检测权限，等用户点击"查看"时再检测
-                // console.log('开始后台权限检测...');
                 // this.batchDetectPermissions(accounts);
             } catch (error) {
                 console.error('❌ 文件导入失败:', error);
@@ -522,7 +727,7 @@ const app = createApp({
                 this.importing = false;
             }
         },
-        
+
         // 读取文件为文本
         readFileAsText(file) {
             return new Promise((resolve, reject) => {
@@ -532,33 +737,29 @@ const app = createApp({
                 reader.readAsText(file, 'utf-8');
             });
         },
-        
+
         // 解析Excel文件（前端实现）
         parseExcelFile(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
-                
+
                 reader.onload = (e) => {
                     try {
-                        console.log('开始解析Excel文件...');
                         const data = new Uint8Array(e.target.result);
                         const workbook = XLSX.read(data, { type: 'array' });
-                        
+
                         // 获取第一个工作表
                         const firstSheetName = workbook.SheetNames[0];
                         const worksheet = workbook.Sheets[firstSheetName];
-                        console.log(`读取工作表: ${firstSheetName}`);
-                        
+
                         // 转换为JSON数组（保持原始顺序）
-                        const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+                        const jsonData = XLSX.utils.sheet_to_json(worksheet, {
                             header: 1,  // 使用数组格式，不使用对象格式
                             defval: ''  // 空单元格默认值
                         });
-                        
-                        console.log(`Excel总行数: ${jsonData.length}`);
-                        
+
                         const accounts = [];
-                        
+
                         // 从第1行开始（跳过标题行，如果有的话）
                         // 判断第一行是否为标题
                         let startRow = 0;
@@ -568,58 +769,62 @@ const app = createApp({
                             // 如果第一行包含"邮箱"、"email"等关键字，视为标题行
                             if (firstCell.includes('邮箱') || firstCell.includes('email') || firstCell.includes('账号')) {
                                 startRow = 1;
-                                console.log('检测到标题行，从第2行开始解析');
                             }
                         }
-                        
+
+                        const headerRow = startRow === 1 ? jsonData[0] : [];
+                        const providerColumnIndex = headerRow.findIndex(cell => {
+                            const title = String(cell || '').trim().toLowerCase();
+                            return ['provider', '服务商', '平台'].includes(title);
+                        });
+
                         // 解析数据行（保持文件中的顺序）
                         for (let i = startRow; i < jsonData.length; i++) {
                             const row = jsonData[i];
-                            
+
                             // 跳过空行
                             if (!row || row.length === 0 || !row[0]) continue;
-                            
+
                             const email = String(row[0] || '').trim();
-                            
+
                             // 验证邮箱格式
                             if (!email || !email.includes('@')) {
-                                console.log(`第${i+1}行: 跳过无效邮箱 - ${email}`);
                                 continue;
                             }
-                            
+
                             // 构建账号对象
-                            // Excel格式：第1列邮箱，第2列密码，第3列client_id，第4列刷新令牌，第5列令牌过期时间，第6列分组
-                            const account = {
-                                邮箱地址: email,
-                                密码: String(row[1] || '').trim(),
-                                client_id: String(row[2] || '').trim(),
-                                刷新令牌: String(row[3] || '').trim(),
-                                令牌过期时间: String(row[4] || '').trim(),
-                                分组: String(row[5] || '默认分组').trim() || '默认分组'
-                            };
-                            
+                            // Excel格式：第1列邮箱，第2列密码，第3列client_id，第4列刷新令牌，第5列令牌过期时间，第6列分组，第7列provider
+                            const providerValue = providerColumnIndex >= 0 ? row[providerColumnIndex] : row[6];
+                            const account = this.createAccountRecord({
+                                email,
+                                password: String(row[1] || '').trim(),
+                                clientId: String(row[2] || '').trim(),
+                                refreshToken: String(row[3] || '').trim(),
+                                tokenExpiresAt: String(row[4] || '').trim(),
+                                group: String(row[5] || '默认分组').trim() || '默认分组',
+                                provider: String(providerValue || '').trim()
+                            });
+
                             accounts.push(account);
-                            console.log(`第${i+1}行: 成功解析 - ${email}`);
                         }
-                        
-                        console.log(`✅ Excel解析完成，共解析 ${accounts.length} 个有效账号`);
+
                         resolve(accounts);
-                        
+
                     } catch (error) {
                         console.error('❌ Excel解析失败:', error);
                         reject(new Error('Excel文件解析失败: ' + error.message));
                     }
                 };
-                
+
                 reader.onerror = () => {
                     reject(new Error('文件读取失败'));
                 };
-                
+
                 // 读取为ArrayBuffer
                 reader.readAsArrayBuffer(file);
             });
         },
-        
+
         handleImportSuccess(response) {
             if (response.success) {
                 ElMessage.success(response.message);
@@ -630,11 +835,11 @@ const app = createApp({
                 ElMessage.error(response.message || '导入失败');
             }
         },
-        
+
         handleImportError(error) {
             ElMessage.error('导入失败: ' + error.message);
         },
-        
+
         // ==================== 删除 ====================
         async deleteAccount(email) {
             try {
@@ -643,10 +848,10 @@ const app = createApp({
                     confirmButtonText: '确定',
                     cancelButtonText: '取消'
                 });
-                
+
                 // 从浏览器本地数据库删除
                 await localDB.deleteAccount(email);
-                
+
                 ElMessage.success('删除成功');
                 await this.loadAccounts();
             } catch (error) {
@@ -655,29 +860,29 @@ const app = createApp({
                 }
             }
         },
-        
+
         async handleBatchDelete() {
             let accounts = [];
-            
+
             // 如果是全选模式，获取所有数据
             if (this.selectAllMode) {
                 // 使用 IndexedDB 获取所有账号（应用当前筛选条件）
                 let allAccounts = await localDB.getAllAccounts();
-                
+
                 // 应用搜索筛选
                 if (this.search) {
                     const searchLower = this.search.toLowerCase();
-                    allAccounts = allAccounts.filter(acc => 
+                    allAccounts = allAccounts.filter(acc =>
                         acc.邮箱地址?.toLowerCase().includes(searchLower) ||
                         acc.密码?.toLowerCase().includes(searchLower)
                     );
                 }
-                
+
                 // 应用分组筛选
                 if (this.selectedGroup !== '全部') {
                     allAccounts = allAccounts.filter(acc => acc.分组 === this.selectedGroup);
                 }
-                
+
                 accounts = allAccounts;
             } else {
                 if (this.selectedAccounts.length === 0) {
@@ -686,29 +891,29 @@ const app = createApp({
                 }
                 accounts = this.selectedAccounts;
             }
-            
+
             if (accounts.length === 0) {
                 ElMessage.warning('没有可删除的账号');
                 return;
             }
-            
+
             try {
                 await ElMessageBox.confirm(
                     `确定要删除选中的 ${accounts.length} 个账号吗？此操作不可恢复！`,
                     '警告',
                     { type: 'warning' }
                 );
-                
+
                 const emails = accounts.map(acc => acc.邮箱地址);
-                
+
                 // 使用 IndexedDB 批量删除
                 await localDB.batchDeleteAccounts(emails);
-                
+
                 // 如果是全选模式，清除标志
                 if (this.selectAllMode) {
                     this.selectAllMode = false;
                 }
-                
+
                 ElMessage.success(`成功删除 ${emails.length} 个账号`);
                 this.loadAccounts();
             } catch (error) {
@@ -717,35 +922,35 @@ const app = createApp({
                 }
             }
         },
-        
+
         // ==================== 批量设置分组 ====================
         openGroupDialog() {
             if (this.selectedAccounts.length === 0) {
                 ElMessage.warning('请先选择要设置分组的账号');
                 return;
             }
-            
+
             this.selectedGroupName = '';
             this.groupDialogVisible = true;
         },
-        
+
         async batchUpdateGroup() {
             if (this.selectedAccounts.length === 0) {
                 ElMessage.warning('请先选择要设置分组的账号');
                 return;
             }
-            
+
             if (!this.selectedGroupName) {
                 ElMessage.warning('请选择分组名称');
                 return;
             }
-            
+
             try {
                 const email_addresses = this.selectedAccounts.map(acc => acc.邮箱地址);
-                
+
                 // 使用 IndexedDB 批量更新分组
                 const result = await localDB.batchUpdateGroup(email_addresses, this.selectedGroupName);
-                
+
                 ElMessage.success(`成功设置 ${result.success} 个账号的分组`);
                 this.groupDialogVisible = false;
                 await this.loadGroups();
@@ -754,56 +959,56 @@ const app = createApp({
                 ElMessage.error('设置分组失败: ' + (error.response?.data?.detail || error.message));
             }
         },
-        
+
         // ==================== 新增分组 ====================
         openAddGroupDialog() {
             this.newGroupName = '';
             this.newGroupColor = this.presetColors[0];
             this.addGroupDialogVisible = true;
         },
-        
+
         async addGroup() {
             if (!this.newGroupName || !this.newGroupName.trim()) {
                 ElMessage.warning('请输入分组名称');
                 return;
             }
-            
+
             const groupName = this.newGroupName.trim();
-            
+
             // 检查分组是否已存在
             if (this.groups.find(g => g.name === groupName)) {
                 ElMessage.warning('该分组已存在');
                 return;
             }
-            
+
             try {
                 // 保存到 localStorage
                 this.saveCustomGroup(groupName, this.newGroupColor);
-                
+
                 // 保存颜色映射
                 this.groupColors[groupName] = this.newGroupColor;
                 this.saveGroupColorsToStorage();
-                
+
                 // 添加到本地列表
                 this.groups.push({
                     name: groupName,
                     color: this.newGroupColor,
                     count: 0
                 });
-                
+
                 ElMessage.success('分组创建成功');
                 this.addGroupDialogVisible = false;
             } catch (error) {
                 ElMessage.error('创建分组失败: ' + error.message);
             }
         },
-        
+
         // ==================== 删除分组 ====================
         openDeleteGroupDialog() {
             this.deleteGroupNames = [];
             this.deleteGroupDialogVisible = true;
         },
-        
+
         toggleGroupSelection(groupName) {
             const index = this.deleteGroupNames.indexOf(groupName);
             if (index > -1) {
@@ -812,27 +1017,27 @@ const app = createApp({
                 this.deleteGroupNames.push(groupName);
             }
         },
-        
+
         async batchDeleteGroups() {
             if (this.deleteGroupNames.length === 0) {
                 ElMessage.warning('请选择要删除的分组');
                 return;
             }
-            
+
             try {
                 await ElMessageBox.confirm(
                     `确定要删除选中的 ${this.deleteGroupNames.length} 个分组吗？这些分组下的所有账号将被设置为"默认分组"`,
                     '警告',
                     { type: 'warning' }
                 );
-                
+
                 // 批量删除
                 let successCount = 0;
                 for (const groupName of this.deleteGroupNames) {
                     try {
                         // 使用 IndexedDB 删除分组（将该分组的账号改为默认分组）
                         await localDB.deleteGroup(groupName);
-                        
+
                         // 从 localStorage 中删除
                         this.removeCustomGroup(groupName);
                         delete this.groupColors[groupName];
@@ -841,7 +1046,7 @@ const app = createApp({
                         console.error(`删除分组 ${groupName} 失败:`, error);
                     }
                 }
-                
+
                 this.saveGroupColorsToStorage();
                 ElMessage.success(`成功删除 ${successCount} 个分组`);
                 this.deleteGroupDialogVisible = false;
@@ -853,31 +1058,31 @@ const app = createApp({
                 }
             }
         },
-        
+
         // ==================== 批量复制 ====================
         async handleBatchCopy(command) {
             let data = [];
             let accounts = [];
-            
+
             // 如果是全选模式，获取所有数据
             if (this.selectAllMode) {
                 // 使用 IndexedDB 获取所有账号（应用当前筛选条件）
                 let allAccounts = await localDB.getAllAccounts();
-                
+
                 // 应用搜索筛选
                 if (this.search) {
                     const searchLower = this.search.toLowerCase();
-                    allAccounts = allAccounts.filter(acc => 
+                    allAccounts = allAccounts.filter(acc =>
                         acc.邮箱地址?.toLowerCase().includes(searchLower) ||
                         acc.密码?.toLowerCase().includes(searchLower)
                     );
                 }
-                
+
                 // 应用分组筛选
                 if (this.selectedGroup !== '全部') {
                     allAccounts = allAccounts.filter(acc => acc.分组 === this.selectedGroup);
                 }
-                
+
                 accounts = allAccounts;
             } else {
                 if (this.selectedAccounts.length === 0) {
@@ -886,7 +1091,7 @@ const app = createApp({
                 }
                 accounts = this.selectedAccounts;
             }
-            
+
             // 根据命令生成不同格式的数据
             if (command === 'accounts') {
                 data = accounts.map(acc => acc.邮箱地址);
@@ -895,12 +1100,12 @@ const app = createApp({
             } else if (command === 'both') {
                 data = accounts.filter(acc => acc.密码).map(acc => `${acc.邮箱地址}----${acc.密码}`);
             }
-            
+
             if (data.length === 0) {
                 ElMessage.warning('没有可复制的数据');
                 return;
             }
-            
+
             // 复制到剪贴板
             const text = data.join('\n');
             try {
@@ -917,7 +1122,7 @@ const app = createApp({
                 ElMessage.success(`已复制 ${data.length} 条数据到剪贴板`);
             }
         },
-        
+
         // ==================== 右键菜单 ====================
         handleRowMenu(command, row) {
             if (command === 'check') {
@@ -937,17 +1142,17 @@ const app = createApp({
                 ElMessage.success('已取消全部勾选');
             }
         },
-        
+
         async checkFromRow(startRow) {
             try {
                 const { value } = await ElMessageBox.prompt('请输入要勾选的数量', '从本行勾选N个', {
                     inputPattern: /^[1-9]\d*$/,
                     inputErrorMessage: '请输入有效的正整数'
                 });
-                
+
                 const count = parseInt(value);
                 const startIndex = this.accounts.findIndex(acc => acc.邮箱地址 === startRow.邮箱地址);
-                
+
                 if (startIndex !== -1) {
                     const toSelect = this.accounts.slice(startIndex, startIndex + count);
                     toSelect.forEach(row => {
@@ -959,7 +1164,7 @@ const app = createApp({
                 // 用户取消
             }
         },
-        
+
         checkAllData() {
             this.selectAllMode = true;
             // 勾选当前页所有行
@@ -975,7 +1180,10 @@ const app = createApp({
          */
         async detectAccountPermission(account) {
             try {
-                console.log(`检测账号权限: ${account.邮箱地址}`);
+                const provider = this.normalizeProvider(account.provider, account.邮箱地址);
+                if (provider === 'google') {
+                    return { success: true, token_type: 'gmail_api', use_local_ip: false };
+                }
 
                 // 调用后端API检测权限
                 const response = await fetch(`${this.apiBase}/detect-permission`, {
@@ -990,12 +1198,11 @@ const app = createApp({
                 });
 
                 if (!response.ok) {
-                    console.error(`权限检测失败 (${account.邮箱地址}): HTTP ${response.status}`);
+                    console.error(`权限检测失败: HTTP ${response.status}`);
                     return { success: false, token_type: 'unknown', use_local_ip: false };
                 }
 
                 const data = await response.json();
-                console.log(`权限检测结果 (${account.邮箱地址}):`, data);
 
                 if (!data.success) {
                     return { success: false, token_type: 'unknown', use_local_ip: false };
@@ -1007,7 +1214,7 @@ const app = createApp({
                     use_local_ip: data.use_local_ip
                 };
             } catch (error) {
-                console.error(`权限检测异常 (${account.邮箱地址}):`, error);
+                console.error('权限检测异常:', error?.message || error);
                 return { success: false, token_type: 'unknown', use_local_ip: false };
             }
         },
@@ -1156,7 +1363,7 @@ const app = createApp({
             // 直接从后端获取邮件，不使用IndexedDB缓存
             this.refreshEmailsFromServer();
         },
-        
+
         async refreshEmailsFromServer() {
             // 刷新邮件 - 根据账号权限类型选择调用方式
             this.emailsLoading = true;
@@ -1173,15 +1380,17 @@ const app = createApp({
                 }
 
                 let { client_id, 刷新令牌, 令牌类型, 权限已检测 } = currentAccount;
+                const provider = this.normalizeProvider(currentAccount.provider, currentAccount.邮箱地址);
 
-                if (!client_id || !刷新令牌 || 刷新令牌 === '封禁' || 刷新令牌 === '锁定' || 刷新令牌 === '过期' || 刷新令牌 === '无效') {
+                if (!刷新令牌 || this.isBlockedRefreshToken(刷新令牌) || (provider === 'microsoft' && !client_id)) {
                     ElMessage.warning('账号缺少必要信息或令牌异常，无法刷新邮件');
                     return;
                 }
 
-                // 如果权限还没检测过，先检测权限
-                if (!权限已检测 || !令牌类型) {
-                    console.log('⟳ 首次查看，正在检测权限...');
+                if (provider === 'google') {
+                    令牌类型 = 令牌类型 || 'gmail_api';
+                } else if (!权限已检测 || !令牌类型) {
+                    // 如果 Microsoft 权限还没检测过，先检测权限
                     const permissionResult = await this.detectAccountPermission(currentAccount);
 
                     // 静默更新数据库（不刷新UI，避免跳动）
@@ -1192,32 +1401,24 @@ const app = createApp({
 
                     // 更新当前账号的令牌类型（用于后续邮件获取）
                     令牌类型 = permissionResult.token_type;
-
-                    console.log(`✅ 权限检测完成: ${令牌类型}`);
                     // 注意：不刷新列表UI，避免跳动。用户关闭对话框后会自然看到更新
                 }
 
                 // 统一通过后端API调用（后端会根据token_type智能路由）
-                console.log(`📡 调用后端API (令牌类型: ${令牌类型 || 'imap'})`);
                 const response = await axios.post(`${API_BASE}/api/emails/refresh`, {
                     email_address: this.currentEmail,
                     client_id: client_id,
                     refresh_token: 刷新令牌,
                     folder: this.currentFolder,
-                    token_type: 令牌类型 || 'imap'  // 传递令牌类型给后端
+                    token_type: 令牌类型 || 'imap',  // 传递令牌类型给后端
+                    provider: provider || 'microsoft'
                 });
-                
+
                 if (!response.data.success) {
                     // 处理API错误，检查错误类型
                     const errorType = response.data.error_type;
                     const errorMsg = response.data.message || '刷新邮件失败';
-                    
-                    console.log('🔍 API返回错误:', {
-                        errorType,
-                        errorMsg,
-                        fullResponse: response.data
-                    });
-                    
+
                     // 检测需要更新状态的错误类型
                     if (errorType === 'banned' || errorType === 'locked' || errorType === 'expired' || errorType === 'invalid') {
                         try {
@@ -1228,21 +1429,20 @@ const app = createApp({
                                 'expired': { 刷新令牌: '过期', 备注: '刷新令牌已过期' },
                                 'invalid': { 刷新令牌: '无效', 备注: '刷新令牌无效' }
                             };
-                            
+
                             const status = statusMap[errorType];
                             if (status) {
                                 await localDB.updateAccount(this.currentEmail, status);
-                                console.log('✓ 已更新账号状态:', status);
-                                
+
                                 // 刷新账号列表
                                 await this.loadAccounts();
-                                
+
                                 ElMessage.warning({
                                     message: `${errorMsg}，系统已自动标记`,
                                     duration: 3000,
                                     showClose: true
                                 });
-                                
+
                                 // 关闭邮件对话框
                                 this.emailDialogVisible = false;
                             }
@@ -1255,7 +1455,7 @@ const app = createApp({
                     }
                     return;
                 }
-                
+
                 // 处理邮件数据
                 const emails = response.data.data.map(email => ({
                     id: email.id,
@@ -1275,21 +1475,17 @@ const app = createApp({
                 this.filteredEmails = emails;
 
                 ElMessage.success(response.data.message);
-                
+
             } catch (error) {
-                console.error('刷新邮件失败:', error);
                 const errorData = error.response?.data || {};
                 const errorMsg = errorData.message || error.message || '未知错误';
                 const errorType = errorData.error_type;
-                
-                // 🔍 调试日志
-                console.log('=== 错误详情 ===');
-                console.log('完整错误对象:', error);
-                console.log('响应数据:', errorData);
-                console.log('错误消息:', errorMsg);
-                console.log('错误类型:', errorType);
-                console.log('===============');
-                
+                console.error('刷新邮件失败:', {
+                    status: error.response?.status,
+                    error_type: errorType,
+                    message: errorMsg
+                });
+
                 // 检测账号封禁/锁定状态
                 if (errorType === 'banned' || errorType === 'locked') {
                     try {
@@ -1297,19 +1493,18 @@ const app = createApp({
                             刷新令牌: errorType === 'banned' ? '封禁' : '锁定',
                             备注: errorType === 'banned' ? '账号被Microsoft封禁' : '账号被Microsoft锁定'
                         };
-                        
+
                         await localDB.updateAccount(this.currentEmail, updates);
-                        console.log('✓ 已更新账号状态:', updates);
-                        
+
                         // 刷新账号列表
                         await this.loadAccounts();
-                        
+
                         ElMessage.warning({
                             message: errorType === 'banned' ? '账号已被封禁，系统已自动标记' : '账号已被锁定，系统已自动标记',
                             duration: 3000,
                             showClose: true
                         });
-                        
+
                         // 关闭邮件对话框
                         this.emailDialogVisible = false;
                     } catch (updateError) {
@@ -1322,12 +1517,12 @@ const app = createApp({
                 this.emailsLoading = false;
             }
         },
-        
+
         async loadEmailsForFolder() {
             this.emailsLoading = true;
             this.emails = [];
             this.filteredEmails = [];
-            
+
             try {
                 // 从浏览器本地数据库加载邮件
                 const emails = await localDB.getEmails(this.currentEmail, this.currentFolder);
@@ -1339,7 +1534,7 @@ const app = createApp({
                 this.emailsLoading = false;
             }
         },
-        
+
         filterEmails() {
             const keyword = this.emailSearch.toLowerCase();
             this.filteredEmails = this.emails.filter(email => {
@@ -1347,7 +1542,7 @@ const app = createApp({
                        (email.from_address || '').toLowerCase().includes(keyword);
             });
         },
-        
+
         showEmailDetail(email) {
             this.currentEmailDetail = email;
             // 不再需要单独的详情对话框，直接在右侧显示
@@ -1371,161 +1566,18 @@ const app = createApp({
                 }
             });
         },
-        
+
         renderEmailInIframe() {
-            // 在对话框打开后渲染邮件内容到 iframe
-            this.$nextTick(() => {
-                const iframe = this.$refs.emailIframe;
-                if (!iframe || !this.currentEmailDetail) return;
-                
-                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                
-                // 构建完整的 HTML 文档
-                const htmlContent = `
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <style>
-                            body {
-                                margin: 0;
-                                padding: 0;
-                                font-family: 'Segoe UI', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
-                                font-size: 14px;
-                                line-height: 1.6;
-                                color: #1e293b;
-                                background: #ffffff;
-                                word-wrap: break-word;
-                                overflow-wrap: break-word;
-                            }
-                            
-                            /* 图片样式 */
-                            img {
-                                max-width: 100% !important;
-                                height: auto !important;
-                                display: inline-block;
-                                vertical-align: middle;
-                            }
-                            
-                            /* 彻底隐藏所有无法加载的图片 */
-                            img[src=""],
-                            img:not([src]),
-                            img[src*="cid:"],
-                            img[alt=""],
-                            img[width="1"],
-                            img[height="1"],
-                            img[src^="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP"] {
-                                display: none !important;
-                                visibility: hidden !important;
-                                width: 0 !important;
-                                height: 0 !important;
-                                margin: 0 !important;
-                                padding: 0 !important;
-                                opacity: 0 !important;
-                            }
-                            
-                            /* 使用 JavaScript 隐藏加载失败的图片 */
-                            @supports not (-webkit-mask-image: none) {
-                                img {
-                                    font-size: 0 !important;
-                                    color: transparent !important;
-                                }
-                            }
-                            
-                            /* 链接样式 */
-                            a {
-                                color: #0078d4;
-                                text-decoration: none;
-                            }
-                            
-                            a:hover {
-                                text-decoration: underline;
-                            }
-                            
-                            /* 表格样式 */
-                            table {
-                                border-collapse: collapse;
-                                max-width: 100%;
-                                width: 100%;
-                            }
-                            
-                            table td, table th {
-                                padding: 8px;
-                                vertical-align: top;
-                            }
-                            
-                            /* 确保所有元素不超出容器 */
-                            * {
-                                max-width: 100%;
-                                box-sizing: border-box;
-                            }
-                            
-                            /* 处理邮件中的固定宽度 */
-                            [width] {
-                                width: auto !important;
-                                max-width: 100% !important;
-                            }
-                            
-                            /* 优化段落间距 */
-                            p {
-                                margin: 0 0 12px 0;
-                            }
-                            
-                            /* 优化标题样式 */
-                            h1, h2, h3, h4, h5, h6 {
-                                margin: 16px 0 12px 0;
-                                line-height: 1.3;
-                            }
-                        </style>
-                    </head>
-                    <body>
-                        ${this.currentEmailDetail.body}
-                    </body>
-                    </html>
-                `;
-                
-                // 写入 iframe 内容
-                iframeDoc.open();
-                iframeDoc.write(htmlContent);
-                iframeDoc.close();
-                
-                // 只处理图片，不再动态调整高度
-                try {
-                    const images = iframeDoc.querySelectorAll('img');
-                    images.forEach(img => {
-                        // 预先隐藏 CID 图片和可能失败的图片
-                        const src = img.getAttribute('src') || '';
-                        if (!src || src.includes('cid:') || src === '' || img.width === 1 || img.height === 1) {
-                            img.style.display = 'none';
-                            img.style.visibility = 'hidden';
-                            img.style.width = '0';
-                            img.style.height = '0';
-                            img.style.opacity = '0';
-                        }
-                        
-                        // 监听后续的加载错误
-                        img.onerror = () => {
-                            img.style.display = 'none';
-                            img.style.visibility = 'hidden';
-                            img.style.width = '0';
-                            img.style.height = '0';
-                            img.style.opacity = '0';
-                        };
-                    });
-                } catch (e) {
-                    console.error('处理图片失败:', e);
-                }
-            });
+            this.adjustIframeHeight();
         },
-        
+
         // ==================== 工具方法 ====================
         async copyText(text, label) {
             if (!text) {
                 ElMessage.warning(`${label}为空`);
                 return;
             }
-            
+
             try {
                 await navigator.clipboard.writeText(text);
                 ElMessage.success(`${label}已复制到剪贴板`);
@@ -1540,7 +1592,7 @@ const app = createApp({
                 ElMessage.success(`${label}已复制到剪贴板`);
             }
         },
-        
+
         formatTime(timeStr) {
             if (!timeStr) return '未知';
             try {
@@ -1556,52 +1608,54 @@ const app = createApp({
                 return timeStr.substring(0, 16);
             }
         },
-        
+
         // ==================== 数据备份与恢复 ====================
         async exportData() {
             try {
                 // 从浏览器本地数据库导出所有数据
                 const data = await localDB.exportData();
-                
+
                 // 将账号数据转换为文本格式（与导入格式一致）
-                // 格式：邮箱地址----密码----client_id----刷新令牌----令牌过期时间----分组
-                const lines = data.accounts.map(acc => {
+                // 格式：邮箱地址----密码----client_id----刷新令牌----令牌过期时间----分组----provider
+                const lines = data.accounts.map(rawAccount => {
+                    const acc = this.normalizeAccountRecord(rawAccount);
                     return [
                         acc.邮箱地址 || '',
                         acc.密码 || '',
                         acc.client_id || '',
                         acc.刷新令牌 || '',
                         acc.令牌过期时间 || '',
-                        acc.分组 || '默认分组'
+                        acc.分组 || '默认分组',
+                        acc.provider || 'microsoft'
                     ].join('----');
                 });
-                
+
                 const textContent = lines.join('\n');
-                
+
                 // 生成文本文件
                 const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
                 const url = URL.createObjectURL(blob);
-                
+
                 // 创建下载链接
                 const link = document.createElement('a');
                 link.href = url;
                 link.download = `邮箱账号导出_${new Date().toISOString().slice(0,10)}.txt`;
                 link.click();
-                
+
                 URL.revokeObjectURL(url);
                 ElMessage.success(`导出成功！共 ${data.accounts.length} 个账号`);
             } catch (error) {
                 ElMessage.error('导出失败: ' + error.message);
             }
         },
-        
+
         async importBackup() {
             try {
                 const input = document.getElementById('backupFileInput');
                 input.onchange = async (e) => {
                     const file = e.target.files[0];
                     if (!file) return;
-                    
+
                     // 询问是覆盖还是合并
                     const { value } = await ElMessageBox.prompt(
                         '请输入 "覆盖" 来清空现有数据并导入，或输入 "合并" 来合并数据：',
@@ -1613,25 +1667,25 @@ const app = createApp({
                             cancelButtonText: '取消'
                         }
                     );
-                    
+
                     const overwrite = value === '覆盖';
-                    
+
                     // 读取JSON文件
                     const reader = new FileReader();
                     reader.onload = async (event) => {
                         try {
                             const data = JSON.parse(event.target.result);
-                            
+
                             // 验证数据格式
                             if (!data.accounts || !Array.isArray(data.accounts)) {
                                 throw new Error('备份文件格式不正确');
                             }
-                            
+
                             // 导入数据到浏览器本地数据库
                             const result = await localDB.importData(data, overwrite);
-                            
+
                             ElMessage.success(`导入成功！账号: ${result.accounts}, 邮件: ${result.emails}`);
-                            
+
                             // 刷新页面
                             await this.loadGroups();
                             await this.loadAccounts();
@@ -1640,11 +1694,11 @@ const app = createApp({
                         }
                     };
                     reader.readAsText(file);
-                    
+
                     // 清空input，允许重复选择同一文件
                     input.value = '';
                 };
-                
+
                 // 触发文件选择
                 input.click();
             } catch (error) {

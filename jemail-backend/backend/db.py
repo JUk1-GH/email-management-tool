@@ -162,6 +162,30 @@ def initialize_database(settings: Settings) -> None:
                 """
             )
             conn.execute("PRAGMA user_version = 2")
+            current_version = 2
+
+        if current_version < 3:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS auth_login_attempts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    attempt_key TEXT NOT NULL UNIQUE,
+                    email TEXT NOT NULL,
+                    ip_address TEXT NOT NULL DEFAULT '',
+                    failed_count INTEGER NOT NULL DEFAULT 0,
+                    first_failed_at TEXT NOT NULL,
+                    last_failed_at TEXT NOT NULL,
+                    locked_until TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_locked_until
+                ON auth_login_attempts (locked_until);
+
+                CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_last_failed_at
+                ON auth_login_attempts (last_failed_at);
+                """
+            )
+            conn.execute("PRAGMA user_version = 3")
         conn.commit()
 
 
@@ -171,6 +195,130 @@ def _hash_session_token(raw_token: str) -> str:
 
 def _clean_expired_sessions(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (utcnow_iso(),))
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _login_attempt_key(email: str, ip_address: str) -> str:
+    return hashlib.sha256(f"{email}\x1f{ip_address.strip()}".encode("utf-8")).hexdigest()
+
+
+def _clean_old_login_attempts(conn: sqlite3.Connection, settings: Settings) -> None:
+    cutoff = utcnow() - timedelta(
+        minutes=max(settings.login_rate_window_minutes, settings.login_lockout_minutes, 1) * 4
+    )
+    conn.execute(
+        """
+        DELETE FROM auth_login_attempts
+        WHERE last_failed_at <= ? AND (locked_until IS NULL OR locked_until <= ?)
+        """,
+        (cutoff.isoformat(), utcnow_iso()),
+    )
+
+
+def _check_login_rate_limit(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    email: str,
+    ip_address: str,
+) -> None:
+    row = conn.execute(
+        "SELECT locked_until FROM auth_login_attempts WHERE attempt_key = ?",
+        (_login_attempt_key(email, ip_address),),
+    ).fetchone()
+    locked_until = _parse_iso_datetime(row["locked_until"]) if row else None
+    now = utcnow()
+    if locked_until and locked_until > now:
+        retry_after = max(1, int((locked_until - now).total_seconds()))
+        raise AppError(
+            "登录尝试过多，请稍后再试",
+            "rate_limited",
+            429,
+            {"retry_after_seconds": retry_after},
+        )
+
+
+def _record_failed_login_attempt(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    email: str,
+    ip_address: str,
+) -> None:
+    now = utcnow()
+    now_iso = now.isoformat()
+    key = _login_attempt_key(email, ip_address)
+    row = conn.execute(
+        """
+        SELECT failed_count, first_failed_at
+        FROM auth_login_attempts
+        WHERE attempt_key = ?
+        """,
+        (key,),
+    ).fetchone()
+
+    window_started_at = _parse_iso_datetime(row["first_failed_at"]) if row else None
+    window_minutes = max(settings.login_rate_window_minutes, 1)
+    max_failed_attempts = max(settings.login_max_failed_attempts, 1)
+    within_window = bool(
+        window_started_at
+        and window_started_at + timedelta(minutes=window_minutes) > now
+    )
+    failed_count = int(row["failed_count"]) + 1 if row and within_window else 1
+    first_failed_at = row["first_failed_at"] if row and within_window else now_iso
+    locked_until = (
+        (now + timedelta(minutes=settings.login_lockout_minutes)).isoformat()
+        if failed_count >= max_failed_attempts
+        else None
+    )
+
+    conn.execute(
+        """
+        INSERT INTO auth_login_attempts (
+            attempt_key,
+            email,
+            ip_address,
+            failed_count,
+            first_failed_at,
+            last_failed_at,
+            locked_until
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(attempt_key) DO UPDATE SET
+            failed_count = excluded.failed_count,
+            first_failed_at = excluded.first_failed_at,
+            last_failed_at = excluded.last_failed_at,
+            locked_until = excluded.locked_until
+        """,
+        (key, email, ip_address.strip(), failed_count, first_failed_at, now_iso, locked_until),
+    )
+
+    if locked_until:
+        raise AppError(
+            "登录尝试过多，请稍后再试",
+            "rate_limited",
+            429,
+            {"retry_after_seconds": settings.login_lockout_minutes * 60},
+        )
+
+
+def _clear_failed_login_attempts(
+    conn: sqlite3.Connection,
+    email: str,
+    ip_address: str,
+) -> None:
+    conn.execute(
+        "DELETE FROM auth_login_attempts WHERE attempt_key = ?",
+        (_login_attempt_key(email, ip_address),),
+    )
 
 
 def _get_secret_cipher(settings: Settings) -> Fernet:
@@ -373,16 +521,26 @@ def login_user(
 
     with get_connection(settings) as conn:
         _clean_expired_sessions(conn)
+        _clean_old_login_attempts(conn, settings)
+        _check_login_rate_limit(conn, settings, normalized_email, ip_address)
         row = conn.execute(
             "SELECT id, password_hash, is_active FROM users WHERE email = ?",
             (normalized_email,),
         ).fetchone()
         if row is None or not check_password_hash(row["password_hash"], raw_password):
+            try:
+                _record_failed_login_attempt(conn, settings, normalized_email, ip_address)
+            except AppError:
+                conn.commit()
+                raise
+            else:
+                conn.commit()
             raise AppError("邮箱或密码错误", "invalid_credentials", 401)
         if not bool(row["is_active"]):
             raise AppError("当前账号已被停用", "forbidden", 403)
 
         now = utcnow_iso()
+        _clear_failed_login_attempts(conn, normalized_email, ip_address)
         conn.execute(
             "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?",
             (now, now, row["id"]),
@@ -540,19 +698,12 @@ def sync_cloud_accounts(
     deleted_count = 0
 
     with get_connection(settings) as conn:
-        before_count = int(
-            conn.execute(
-                "SELECT COUNT(*) FROM cloud_accounts WHERE user_id = ?",
-                (user_id,),
-            ).fetchone()[0]
-        )
-
         if replace_missing:
             if normalized_accounts:
                 synced_emails = [account["email_address"] for account in normalized_accounts]
                 placeholders = ", ".join("?" for _ in synced_emails)
                 params: list[Any] = [user_id, *synced_emails]
-                conn.execute(
+                delete_cursor = conn.execute(
                     f"""
                     DELETE FROM cloud_accounts
                     WHERE user_id = ? AND email_address NOT IN ({placeholders})
@@ -560,14 +711,8 @@ def sync_cloud_accounts(
                     params,
                 )
             else:
-                conn.execute("DELETE FROM cloud_accounts WHERE user_id = ?", (user_id,))
-            remaining_after_delete = int(
-                conn.execute(
-                    "SELECT COUNT(*) FROM cloud_accounts WHERE user_id = ?",
-                    (user_id,),
-                ).fetchone()[0]
-            )
-            deleted_count = max(before_count - remaining_after_delete, 0)
+                delete_cursor = conn.execute("DELETE FROM cloud_accounts WHERE user_id = ?", (user_id,))
+            deleted_count = max(int(delete_cursor.rowcount or 0), 0)
 
         for account in normalized_accounts:
             existing = conn.execute(
@@ -652,7 +797,6 @@ def sync_cloud_accounts(
                 (user_id,),
             ).fetchone()[0]
         )
-        deleted_count = max(before_count + len(normalized_accounts) - after_count, 0)
 
         conn.execute(
             "UPDATE user_profiles SET last_cloud_push_at = ?, updated_at = ? WHERE user_id = ?",

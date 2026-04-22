@@ -45,6 +45,9 @@ from .models import (
     TwoFactorCodeRequest,
 )
 from .twofa import generate_two_factor_code
+from .turnstile import is_turnstile_enabled, verify_turnstile_token
+
+AUTH_COOKIE_NAME = "jemail_session"
 
 
 def create_app(settings: Settings | None = None) -> Flask:
@@ -55,13 +58,57 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.config["JEMAIL_SETTINGS"] = settings
 
     @app.after_request
-    def add_cors_headers(response):
+    def add_security_headers(response):
         cors_origin = settings.cors_origin
         if cors_origin:
             response.headers["Access-Control-Allow-Origin"] = cors_origin
             response.headers["Vary"] = "Origin"
             response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+
+        if request.path.startswith("/api/oauth/google/callback"):
+            script_src = "script-src 'self' 'unsafe-inline'"
+        else:
+            script_src = "script-src 'self'"
+
+        turnstile_origin = "https://challenges.cloudflare.com"
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            f"{script_src} {turnstile_origin}; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https: http:; "
+            "font-src 'self' data:; "
+            f"connect-src 'self' {turnstile_origin}; "
+            f"frame-src 'self' about: {turnstile_origin}; "
+            "object-src 'none'; "
+            "base-uri 'none'; "
+            "frame-ancestors 'none'",
+        )
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+        return response
+
+    def attach_auth_cookie(response, token: str):
+        response.set_cookie(
+            AUTH_COOKIE_NAME,
+            token,
+            max_age=settings.auth_session_ttl_days * 24 * 60 * 60,
+            secure=True,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+        )
+        return response
+
+    def clear_auth_cookie(response):
+        response.delete_cookie(AUTH_COOKIE_NAME, path="/", secure=True, httponly=True, samesite="Lax")
         return response
 
     def serve_frontend_asset(asset_path: str = "index.html"):
@@ -73,7 +120,11 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     @app.errorhandler(AppError)
     def handle_app_error(error: AppError):
-        return jsonify(error.to_dict()), error.status_code
+        response = jsonify(error.to_dict())
+        retry_after = (error.details or {}).get("retry_after_seconds")
+        if error.status_code == 429 and retry_after:
+            response.headers["Retry-After"] = str(retry_after)
+        return response, error.status_code
 
     def get_request_ip() -> str:
         forwarded_for = str(request.headers.get("X-Forwarded-For", "")).strip()
@@ -86,11 +137,13 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     def get_bearer_token() -> str:
         authorization = str(request.headers.get("Authorization", "")).strip()
-        if not authorization.lower().startswith("bearer "):
-            raise AppError("缺少 Bearer 登录凭证", "unauthorized", 401)
-        token = authorization[7:].strip()
+        token = ""
+        if authorization.lower().startswith("bearer "):
+            token = authorization[7:].strip()
         if not token:
-            raise AppError("登录凭证为空", "unauthorized", 401)
+            token = str(request.cookies.get(AUTH_COOKIE_NAME, "")).strip()
+        if not token:
+            raise AppError("缺少登录凭证", "unauthorized", 401)
         return token
 
     def require_auth() -> tuple[str, dict[str, object]]:
@@ -100,7 +153,8 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     def try_require_auth() -> tuple[str, dict[str, object]] | None:
         authorization = str(request.headers.get("Authorization", "")).strip()
-        if not authorization:
+        cookie_token = str(request.cookies.get(AUTH_COOKIE_NAME, "")).strip()
+        if not authorization and not cookie_token:
             return None
         return require_auth()
 
@@ -121,9 +175,22 @@ def create_app(settings: Settings | None = None) -> Flask:
     def cors_preflight(_api_path: str | None = None):
         return ("", 204)
 
+    @app.get("/api/auth/security-config")
+    def auth_security_config():
+        return jsonify(
+            {
+                "success": True,
+                "turnstile_enabled": is_turnstile_enabled(settings),
+                "turnstile_site_key": settings.turnstile_site_key
+                if is_turnstile_enabled(settings)
+                else "",
+            }
+        )
+
     @app.post("/api/auth/register")
     def auth_register():
         payload = RegisterRequest.from_dict(request.get_json(silent=True))
+        verify_turnstile_token(settings, payload.captcha_token, get_request_ip())
         result = register_user(
             settings,
             payload.email,
@@ -132,17 +199,19 @@ def create_app(settings: Settings | None = None) -> Flask:
             user_agent=get_request_user_agent(),
             ip_address=get_request_ip(),
         )
-        return jsonify(
+        response = jsonify(
             {
                 "success": True,
                 "message": "注册成功",
                 **result,
             }
         )
+        return attach_auth_cookie(response, str(result["token"]))
 
     @app.post("/api/auth/login")
     def auth_login():
         payload = LoginRequest.from_dict(request.get_json(silent=True))
+        verify_turnstile_token(settings, payload.captcha_token, get_request_ip())
         result = login_user(
             settings,
             payload.email,
@@ -150,13 +219,14 @@ def create_app(settings: Settings | None = None) -> Flask:
             user_agent=get_request_user_agent(),
             ip_address=get_request_ip(),
         )
-        return jsonify(
+        response = jsonify(
             {
                 "success": True,
                 "message": "登录成功",
                 **result,
             }
         )
+        return attach_auth_cookie(response, str(result["token"]))
 
     @app.get("/api/auth/me")
     def auth_me():
@@ -173,7 +243,8 @@ def create_app(settings: Settings | None = None) -> Flask:
     def auth_logout():
         token = get_bearer_token()
         logout_session(settings, token)
-        return jsonify({"success": True, "message": "已退出登录"})
+        response = jsonify({"success": True, "message": "已退出登录"})
+        return clear_auth_cookie(response)
 
     @app.get("/api/cloud/accounts")
     def cloud_accounts_list():

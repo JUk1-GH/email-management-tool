@@ -137,6 +137,10 @@ export default function AccountTable() {
     setExpandedEmail((current) => (current === email ? null : email))
   }, [])
 
+  const handleAccountUpdated = useCallback(async () => {
+    await loadAccounts()
+  }, [loadAccounts])
+
   const handleBindGoogle = useCallback(
     async (account: Account) => {
       try {
@@ -237,6 +241,7 @@ export default function AccountTable() {
             onView={handleView}
             onGenerateTwoFactorCode={handleGenerateTwoFactor}
             onRowMenuCommand={handleRowMenuCommand}
+            onAccountUpdated={handleAccountUpdated}
           />
         ))}
       </div>
@@ -304,6 +309,7 @@ export default function AccountTable() {
                   onGenerateTwoFactorCode={handleGenerateTwoFactor}
                   onBindGoogle={handleBindGoogle}
                   onRowMenuCommand={handleRowMenuCommand}
+                  onAccountUpdated={handleAccountUpdated}
                 />
               ))}
             </AnimatePresence>

@@ -1,19 +1,15 @@
-import { useRef, useEffect } from 'react'
 import { useEmailStore } from '@/stores/email-store'
 import { formatTime } from '@/lib/format'
+import { sanitizeEmailHtml } from '@/lib/sanitize-email-html'
 
 export default function EmailDetail() {
   const email = useEmailStore((s) => s.currentEmailDetail)
-  const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  useEffect(() => {
-    if (!email || !iframeRef.current) return
+  const safeEmailBody = email
+    ? sanitizeEmailHtml(email.body || email.body_html || email.body_preview || '')
+    : ''
 
-    const iframe = iframeRef.current
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document
-    if (!iframeDoc) return
-
-    const htmlContent = `<!DOCTYPE html>
+  const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
@@ -60,74 +56,25 @@ h1, h2, h3, h4, h5, h6 { margin: 16px 0 12px 0; line-height: 1.3; }
 .email-scale {
   transform-origin: top left;
 }
+@media (max-width: 640px) {
+  .email-root {
+    padding: 12px 14px 20px;
+  }
+  table {
+    display: block;
+    overflow-x: auto;
+  }
+}
 </style>
 </head>
 <body>
   <div class="email-root">
     <div class="email-scale" id="email-scale">
-      ${email.body || email.body_html || email.body_preview || ''}
+      ${safeEmailBody}
     </div>
   </div>
-  <script>
-    (function () {
-      var root = document.getElementById('email-scale');
-      if (!root) return;
-
-      function fitContent() {
-        root.style.transform = 'scale(1)';
-        root.style.width = 'auto';
-        root.style.minWidth = '0';
-
-        var viewportWidth = document.documentElement.clientWidth || window.innerWidth || 0;
-        if (!viewportWidth) return;
-
-        var availableWidth = Math.max(viewportWidth - 36, 320);
-        var contentWidth = Math.max(root.scrollWidth, root.getBoundingClientRect().width || 0);
-        if (!contentWidth || contentWidth <= availableWidth) return;
-
-        var scale = availableWidth / contentWidth;
-        if (scale >= 1) return;
-
-        root.style.transform = 'scale(' + scale + ')';
-        root.style.width = (contentWidth / scale) + 'px';
-        document.body.style.minHeight = Math.ceil(root.scrollHeight * scale + 48) + 'px';
-      }
-
-      window.addEventListener('load', fitContent);
-      window.addEventListener('resize', fitContent);
-      setTimeout(fitContent, 0);
-      setTimeout(fitContent, 80);
-      setTimeout(fitContent, 300);
-    })();
-  </script>
 </body>
 </html>`
-
-    iframeDoc.open()
-    iframeDoc.write(htmlContent)
-    iframeDoc.close()
-
-    // Handle broken images
-    try {
-      const images = iframeDoc.querySelectorAll('img')
-      images.forEach((img) => {
-        const src = img.getAttribute('src') || ''
-        if (
-          !src ||
-          src.includes('cid:') ||
-          img.width === 1 ||
-          img.height === 1
-        ) {
-          img.style.display = 'none'
-        }
-        img.onerror = () => {
-          img.style.display = 'none'
-        }
-      })
-    } catch {
-      // Cross-origin restriction
-    }
-  }, [email])
 
   if (!email) {
     return (
@@ -161,10 +108,11 @@ h1, h2, h3, h4, h5, h6 { margin: 16px 0 12px 0; line-height: 1.3; }
       {/* Email body iframe */}
       <div className="flex-1 overflow-auto">
         <iframe
-          ref={iframeRef}
           title="email-content"
           className="w-full h-full border-0"
-          sandbox="allow-same-origin"
+          referrerPolicy="no-referrer"
+          sandbox="allow-popups"
+          srcDoc={htmlContent}
         />
       </div>
     </div>

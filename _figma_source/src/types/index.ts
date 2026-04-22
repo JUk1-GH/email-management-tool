@@ -159,6 +159,12 @@ export interface AuthResponse {
   error_type?: string
 }
 
+export interface AuthSecurityConfig {
+  success: boolean
+  turnstile_enabled: boolean
+  turnstile_site_key: string
+}
+
 export interface CloudAccountRecord {
   email_address: string
   provider: Provider

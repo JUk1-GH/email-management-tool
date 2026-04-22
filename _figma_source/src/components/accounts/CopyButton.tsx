@@ -26,10 +26,10 @@ export default function CopyButton({
   return (
     <button
       onClick={handleCopy}
-      className={`p-1 transition-all ${
+      className={`inline-flex h-7 w-7 items-center justify-center rounded-md p-1 transition-all ${
         alwaysVisible
-          ? 'text-slate-400 hover:text-blue-500 opacity-100'
-          : 'text-slate-300 hover:text-blue-500 opacity-0 group-hover:opacity-100'
+          ? 'text-slate-400 hover:bg-blue-50 hover:text-blue-500 opacity-100'
+          : 'text-slate-300 hover:bg-blue-50 hover:text-blue-500 opacity-0 group-hover:opacity-100'
       }`}
       title="复制"
     >

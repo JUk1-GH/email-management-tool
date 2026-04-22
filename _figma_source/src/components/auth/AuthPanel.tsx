@@ -1,14 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Cloud, HardDrive, LockKeyhole, LogOut, Shield } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAccountStore } from '@/stores/account-store'
 import { useAuthStore } from '@/stores/auth-store'
+import { fetchAuthSecurityConfig } from '@/lib/api'
+import TurnstileWidget from './TurnstileWidget'
 
 export default function AuthPanel() {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [securityLoaded, setSecurityLoaded] = useState(false)
+  const [securityError, setSecurityError] = useState('')
+  const [turnstileEnabled, setTurnstileEnabled] = useState(false)
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState('')
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0)
 
   const authStatus = useAuthStore((s) => s.status)
   const authenticating = useAuthStore((s) => s.authenticating)
@@ -27,21 +35,68 @@ export default function AuthPanel() {
     setEmail('')
     setPassword('')
     setDisplayName('')
+    setTurnstileToken('')
+    setTurnstileResetKey((value) => value + 1)
+  }
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetchAuthSecurityConfig()
+      .then((config) => {
+        if (cancelled) return
+        setTurnstileEnabled(Boolean(config.turnstile_enabled))
+        setTurnstileSiteKey(config.turnstile_site_key || '')
+        setSecurityLoaded(true)
+        setSecurityError('')
+      })
+      .catch((error: Error) => {
+        if (cancelled) return
+        setSecurityLoaded(true)
+        setSecurityError(error.message || '安全配置加载失败')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const switchMode = (nextMode: 'login' | 'register') => {
+    setMode(nextMode)
+    setTurnstileToken('')
+    setTurnstileResetKey((value) => value + 1)
   }
 
   const handleSubmit = async () => {
     try {
+      if (!securityLoaded) {
+        toast.error('安全配置还在加载，请稍后再试')
+        return
+      }
+      if (securityError) {
+        toast.error(securityError)
+        return
+      }
+      if (turnstileEnabled && !turnstileToken) {
+        toast.error('请先完成人机验证')
+        return
+      }
+
       if (mode === 'login') {
-        await login(email, password)
+        await login(email, password, turnstileToken)
         toast.success('登录成功，当前已启用云端同步模式')
       } else {
-        await register(email, password, displayName)
+        await register(email, password, displayName, turnstileToken)
         toast.success('注册成功，当前已启用云端同步模式')
       }
 
       clearForm()
     } catch (error) {
       toast.error((error as Error).message)
+      if (turnstileEnabled) {
+        setTurnstileToken('')
+        setTurnstileResetKey((value) => value + 1)
+      }
     }
   }
 
@@ -125,7 +180,7 @@ export default function AuthPanel() {
 
       <div className="mt-4 inline-flex rounded-full border border-white/80 bg-white/80 p-1 text-[12px] font-medium">
         <button
-          onClick={() => setMode('login')}
+          onClick={() => switchMode('login')}
           className={`rounded-full px-3 py-1.5 transition-colors ${
             mode === 'login' ? 'bg-slate-900 text-white' : 'text-slate-500'
           }`}
@@ -133,7 +188,7 @@ export default function AuthPanel() {
           登录
         </button>
         <button
-          onClick={() => setMode('register')}
+          onClick={() => switchMode('register')}
           className={`rounded-full px-3 py-1.5 transition-colors ${
             mode === 'register' ? 'bg-slate-900 text-white' : 'text-slate-500'
           }`}
@@ -174,11 +229,27 @@ export default function AuthPanel() {
             className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[14px] text-slate-700 outline-none transition-colors focus:border-blue-300"
           />
         </label>
+        {turnstileEnabled && turnstileSiteKey ? (
+          <div className="grid gap-1.5 text-[13px] text-slate-600">
+            <span>人机验证</span>
+            <TurnstileWidget
+              siteKey={turnstileSiteKey}
+              resetKey={turnstileResetKey}
+              onToken={setTurnstileToken}
+              onError={(message) => toast.error(message)}
+            />
+          </div>
+        ) : null}
+        {securityError ? (
+          <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[12px] text-red-600">
+            {securityError}
+          </div>
+        ) : null}
       </div>
 
       <button
         onClick={() => void handleSubmit()}
-        disabled={authenticating}
+        disabled={authenticating || !securityLoaded || Boolean(securityError)}
         className="mt-5 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
       >
         <LockKeyhole size={14} />

@@ -41,6 +41,7 @@ interface AccountMobileCardProps {
   onView: (email: string) => void
   onGenerateTwoFactorCode: (account: Account) => void
   onRowMenuCommand: (command: string, account: Account) => void
+  onAccountUpdated?: () => void
 }
 
 export default function AccountMobileCard({
@@ -54,6 +55,7 @@ export default function AccountMobileCard({
   onView,
   onGenerateTwoFactorCode,
   onRowMenuCommand,
+  onAccountUpdated,
 }: AccountMobileCardProps) {
   const status = getAccountStatus(account)
   const googleBound = account.provider === 'google' && Boolean(account.刷新令牌)
@@ -190,7 +192,7 @@ export default function AccountMobileCard({
                   {account.密码 && <CopyButton text={account.密码} alwaysVisible />}
                 </div>
               </div>
-              <AccountDetailsPanel account={account} />
+              <AccountDetailsPanel account={account} onAccountUpdated={onAccountUpdated} />
             </div>
           )}
         </div>

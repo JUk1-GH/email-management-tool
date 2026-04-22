@@ -43,6 +43,7 @@ interface AccountRowProps {
   onGenerateTwoFactorCode: (account: Account) => void
   onBindGoogle: (account: Account) => void
   onRowMenuCommand: (command: string, account: Account) => void
+  onAccountUpdated?: () => void
 }
 
 export default function AccountRow({
@@ -57,6 +58,7 @@ export default function AccountRow({
   onGenerateTwoFactorCode,
   onBindGoogle,
   onRowMenuCommand,
+  onAccountUpdated,
 }: AccountRowProps) {
   const status = getAccountStatus(account)
   const googleBound = account.provider === 'google' && Boolean(account.刷新令牌)
@@ -210,7 +212,7 @@ export default function AccountRow({
               transition={{ duration: 0.18 }}
               className="pt-2"
             >
-              <AccountDetailsPanel account={account} />
+              <AccountDetailsPanel account={account} onAccountUpdated={onAccountUpdated} />
             </motion.div>
           </td>
         </tr>

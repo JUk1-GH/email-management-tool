@@ -132,24 +132,28 @@ export default function ImportDialog({ open, onClose }: ImportDialogProps) {
 
           <TabsContent value="text" className="space-y-3 mt-4">
             <p className="text-[13px] text-slate-500">
-              兼容多种格式，字段用 Tab、`|` 或 `----` 分隔：
+              兼容多种格式，字段用 Tab、`|`、`,` 或 `----` 分隔：
               <br />
               <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">
-                邮箱地址----密码----client_id----刷新令牌----令牌过期时间----分组
+                microsoft----邮箱地址----密码----client_id----刷新令牌----令牌过期时间----分组
               </code>
               <br />
               <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">
-                provider----邮箱地址----密码----辅助邮箱----2FA----client_id----刷新令牌----令牌过期时间----分组
-              </code>
-              <br />
-              Gmail 库存账号也支持只填：
-              <code className="text-xs bg-slate-100 px-1 py-0.5 rounded ml-1">
                 google----邮箱地址----密码----辅助邮箱----2FA----分组
+              </code>
+              <br />
+              旧 Outlook 格式也兼容：
+              <code className="text-xs bg-slate-100 px-1 py-0.5 rounded ml-1">
+                邮箱地址----密码----client_id----刷新令牌----令牌过期时间----分组
               </code>
               <br />
               也支持你这种紧凑格式：
               <code className="text-xs bg-slate-100 px-1 py-0.5 rounded ml-1">
                 邮箱地址|密码|辅助邮箱|2FA
+              </code>
+              <span className="mx-1">或</span>
+              <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">
+                邮箱地址,密码,辅助邮箱,2FA
               </code>
             </p>
             <textarea

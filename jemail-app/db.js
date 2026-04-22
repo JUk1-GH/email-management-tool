@@ -25,7 +25,6 @@ class LocalDatabase {
 
             request.onsuccess = () => {
                 this.db = request.result;
-                console.log('✅ 浏览器本地数据库初始化成功');
                 resolve(this.db);
             };
 
@@ -35,32 +34,29 @@ class LocalDatabase {
 
                 // 创建账号表
                 if (!db.objectStoreNames.contains('accounts')) {
-                    const accountStore = db.createObjectStore('accounts', { 
-                        keyPath: '邮箱地址' 
+                    const accountStore = db.createObjectStore('accounts', {
+                        keyPath: '邮箱地址'
                     });
                     accountStore.createIndex('分组', '分组', { unique: false });
                     accountStore.createIndex('刷新令牌', '刷新令牌', { unique: false });
                     accountStore.createIndex('导入序号', '导入序号', { unique: false });
-                    console.log('✅ 创建 accounts 表');
                 } else {
                     // 数据库升级：为已存在的表添加新索引
                     const accountStore = transaction.objectStore('accounts');
                     if (!accountStore.indexNames.contains('导入序号')) {
                         accountStore.createIndex('导入序号', '导入序号', { unique: false });
-                        console.log('✅ 添加导入序号索引');
                     }
                 }
 
                 // 创建邮件表
                 if (!db.objectStoreNames.contains('emails')) {
-                    const emailStore = db.createObjectStore('emails', { 
+                    const emailStore = db.createObjectStore('emails', {
                         keyPath: 'id',
-                        autoIncrement: true 
+                        autoIncrement: true
                     });
                     emailStore.createIndex('邮箱地址', '邮箱地址', { unique: false });
                     emailStore.createIndex('folder', 'folder', { unique: false });
                     emailStore.createIndex('邮箱_文件夹', ['邮箱地址', 'folder'], { unique: false });
-                    console.log('✅ 创建 emails 表');
                 }
             };
         });
@@ -89,28 +85,51 @@ class LocalDatabase {
         });
     }
 
+    inferProviderFromEmail(email) {
+        const domain = String(email || '').trim().toLowerCase().split('@').pop() || '';
+        return ['gmail.com', 'googlemail.com'].includes(domain) ? 'google' : 'microsoft';
+    }
+
+    normalizeProvider(provider, email) {
+        const normalized = String(provider || '').trim().toLowerCase();
+        if (normalized === 'microsoft' || normalized === 'google') {
+            return normalized;
+        }
+        return this.inferProviderFromEmail(email);
+    }
+
+    normalizeAccountRecord(account) {
+        const email = account?.邮箱地址 || account?.email_address || '';
+        return {
+            ...account,
+            provider: this.normalizeProvider(account?.provider, email)
+        };
+    }
+
     /**
      * 添加账号（支持批量）
      * 自动为每个账号分配导入序号，保持文件原始顺序
      */
     async addAccounts(accounts) {
-        return new Promise(async (resolve, reject) => {
-            // 获取当前最大的导入序号
-            const existingAccounts = await this.getAllAccounts();
-            let maxSeq = 0;
-            existingAccounts.forEach(acc => {
-                if (acc.导入序号 && acc.导入序号 > maxSeq) {
-                    maxSeq = acc.导入序号;
-                }
-            });
+        // 获取当前最大的导入序号
+        const existingAccounts = await this.getAllAccounts();
+        let maxSeq = 0;
+        existingAccounts.forEach(acc => {
+            if (acc.导入序号 && acc.导入序号 > maxSeq) {
+                maxSeq = acc.导入序号;
+            }
+        });
 
+        return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['accounts'], 'readwrite');
             const store = transaction.objectStore('accounts');
             let successCount = 0;
             let errorCount = 0;
 
             // 为每个账号分配递增的导入序号
-            accounts.forEach((account, index) => {
+            accounts.forEach((rawAccount, index) => {
+                const account = this.normalizeAccountRecord(rawAccount);
+
                 // 如果账号没有导入序号，则分配一个
                 if (!account.导入序号) {
                     account.导入序号 = maxSeq + index + 1;
@@ -145,7 +164,7 @@ class LocalDatabase {
     async deleteAccount(email) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['accounts', 'emails'], 'readwrite');
-            
+
             // 删除账号
             const accountStore = transaction.objectStore('accounts');
             accountStore.delete(email);
@@ -239,7 +258,7 @@ class LocalDatabase {
     async deleteGroup(groupName) {
         const accounts = await this.getAllAccounts();
         const affectedAccounts = accounts.filter(acc => acc.分组 === groupName);
-        
+
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['accounts'], 'readwrite');
             const store = transaction.objectStore('accounts');
@@ -359,7 +378,7 @@ class LocalDatabase {
     async clearAll() {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['accounts', 'emails'], 'readwrite');
-            
+
             transaction.objectStore('accounts').clear();
             transaction.objectStore('emails').clear();
 
@@ -372,7 +391,7 @@ class LocalDatabase {
      * 导出所有数据为JSON
      */
     async exportData() {
-        const accounts = await this.getAllAccounts();
+        const accounts = (await this.getAllAccounts()).map(account => this.normalizeAccountRecord(account));
         const emailsStore = this.db.transaction(['emails'], 'readonly').objectStore('emails');
         const emails = await new Promise((resolve, reject) => {
             const request = emailsStore.getAll();
@@ -402,7 +421,7 @@ class LocalDatabase {
 
         // 导入账号
         data.accounts.forEach(account => {
-            accountStore.put(account);
+            accountStore.put(this.normalizeAccountRecord(account));
         });
 
         // 导入邮件

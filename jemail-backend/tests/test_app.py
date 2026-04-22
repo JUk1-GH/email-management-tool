@@ -4,6 +4,7 @@ import tempfile
 import sqlite3
 import unittest
 import base64
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -32,6 +33,9 @@ class BackendAppTestCase(unittest.TestCase):
             http_timeout=20,
             mail_fetch_limit=50,
             auth_session_ttl_days=30,
+            login_max_failed_attempts=5,
+            login_rate_window_minutes=15,
+            login_lockout_minutes=15,
             live_token_url="https://login.live.com/oauth20_token.srf",
             microsoft_token_url="https://login.microsoftonline.com/common/oauth2/v2.0/token",
             graph_base_url="https://graph.microsoft.com/v1.0",
@@ -42,6 +46,9 @@ class BackendAppTestCase(unittest.TestCase):
             google_token_url="https://oauth2.googleapis.com/token",
             gmail_api_base_url="https://gmail.googleapis.com/gmail/v1",
             google_state_secret="unit-test-secret",
+            turnstile_site_key="",
+            turnstile_secret_key="",
+            turnstile_verify_url="https://challenges.cloudflare.com/turnstile/v0/siteverify",
         )
         self.app = create_app(self.settings)
         self.client = self.app.test_client()
@@ -176,6 +183,9 @@ class BackendAppTestCase(unittest.TestCase):
             http_timeout=self.settings.http_timeout,
             mail_fetch_limit=self.settings.mail_fetch_limit,
             auth_session_ttl_days=self.settings.auth_session_ttl_days,
+            login_max_failed_attempts=self.settings.login_max_failed_attempts,
+            login_rate_window_minutes=self.settings.login_rate_window_minutes,
+            login_lockout_minutes=self.settings.login_lockout_minutes,
             live_token_url=self.settings.live_token_url,
             microsoft_token_url=self.settings.microsoft_token_url,
             graph_base_url=self.settings.graph_base_url,
@@ -186,6 +196,9 @@ class BackendAppTestCase(unittest.TestCase):
             google_token_url=self.settings.google_token_url,
             gmail_api_base_url=self.settings.gmail_api_base_url,
             google_state_secret="",
+            turnstile_site_key=self.settings.turnstile_site_key,
+            turnstile_secret_key=self.settings.turnstile_secret_key,
+            turnstile_verify_url=self.settings.turnstile_verify_url,
         )
         app = create_app(broken_settings)
         client = app.test_client()
@@ -412,6 +425,92 @@ class BackendAppTestCase(unittest.TestCase):
         self.assertEqual(me_payload["user"]["email"], "owner@example.com")
         self.assertEqual(me_payload["cloud_summary"]["account_count"], 0)
 
+    def test_turnstile_config_and_auth_validation_when_enabled(self) -> None:
+        enabled_settings = replace(
+            self.settings,
+            turnstile_site_key="site-key",
+            turnstile_secret_key="secret-key",
+        )
+        app = create_app(enabled_settings)
+        client = app.test_client()
+
+        config_response = client.get("/api/auth/security-config")
+        self.assertEqual(config_response.status_code, 200)
+        config_payload = config_response.get_json()
+        self.assertTrue(config_payload["turnstile_enabled"])
+        self.assertEqual(config_payload["turnstile_site_key"], "site-key")
+
+        missing_captcha_response = client.post(
+            "/api/auth/register",
+            json={
+                "email": "captcha-owner@example.com",
+                "password": "password-123",
+            },
+        )
+        self.assertEqual(missing_captcha_response.status_code, 400)
+        self.assertEqual(
+            missing_captcha_response.get_json()["error_type"],
+            "captcha_required",
+        )
+
+        with patch("backend.app.verify_turnstile_token") as verify_captcha:
+            register_response = client.post(
+                "/api/auth/register",
+                json={
+                    "email": "captcha-owner@example.com",
+                    "password": "password-123",
+                    "captcha_token": "captcha-token",
+                },
+            )
+
+        self.assertEqual(register_response.status_code, 200)
+        verify_captcha.assert_called_once_with(
+            enabled_settings,
+            "captcha-token",
+            "127.0.0.1",
+        )
+
+    def test_login_rate_limit_blocks_repeated_bad_passwords(self) -> None:
+        register_response = self.client.post(
+            "/api/auth/register",
+            json={
+                "email": "owner@example.com",
+                "password": "password-123",
+            },
+        )
+        self.assertEqual(register_response.status_code, 200)
+
+        for _ in range(self.settings.login_max_failed_attempts - 1):
+            response = self.client.post(
+                "/api/auth/login",
+                json={
+                    "email": "owner@example.com",
+                    "password": "wrong-password",
+                },
+            )
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.get_json()["error_type"], "invalid_credentials")
+
+        limited_response = self.client.post(
+            "/api/auth/login",
+            json={
+                "email": "owner@example.com",
+                "password": "wrong-password",
+            },
+        )
+        self.assertEqual(limited_response.status_code, 429)
+        self.assertEqual(limited_response.get_json()["error_type"], "rate_limited")
+        self.assertIn("Retry-After", limited_response.headers)
+
+        correct_password_response = self.client.post(
+            "/api/auth/login",
+            json={
+                "email": "owner@example.com",
+                "password": "password-123",
+            },
+        )
+        self.assertEqual(correct_password_response.status_code, 429)
+
     def test_cloud_sync_rejects_sensitive_fields(self) -> None:
         register_response = self.client.post(
             "/api/auth/register",
@@ -443,6 +542,129 @@ class BackendAppTestCase(unittest.TestCase):
         self.assertFalse(payload["success"])
         self.assertEqual(payload["error_type"], "invalid")
         self.assertIn("敏感字段", payload["message"])
+
+    def test_cloud_sync_append_and_update_reports_no_deleted_accounts(self) -> None:
+        register_response = self.client.post(
+            "/api/auth/register",
+            json={
+                "email": "owner@example.com",
+                "password": "password-123",
+            },
+        )
+        token = register_response.get_json()["token"]
+
+        first_response = self.client.post(
+            "/api/cloud/accounts/sync",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "accounts": [
+                    {
+                        "email_address": "first@example.com",
+                        "provider": "microsoft",
+                        "group_name": "A",
+                        "status": "正常",
+                        "import_sequence": 1,
+                    }
+                ],
+                "replace_missing": True,
+            },
+        )
+        self.assertEqual(first_response.status_code, 200)
+
+        update_response = self.client.post(
+            "/api/cloud/accounts/sync",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "accounts": [
+                    {
+                        "email_address": "first@example.com",
+                        "provider": "microsoft",
+                        "group_name": "B",
+                        "status": "正常",
+                        "import_sequence": 1,
+                    },
+                    {
+                        "email_address": "second@example.com",
+                        "provider": "microsoft",
+                        "group_name": "B",
+                        "status": "正常",
+                        "import_sequence": 2,
+                    },
+                ],
+                "replace_missing": False,
+            },
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+        payload = update_response.get_json()
+        self.assertEqual(payload["data"]["upserted"], 2)
+        self.assertEqual(payload["data"]["deleted"], 0)
+        self.assertEqual(payload["data"]["total"], 2)
+
+    def test_cloud_sync_replace_missing_reports_actual_deleted_count(self) -> None:
+        register_response = self.client.post(
+            "/api/auth/register",
+            json={
+                "email": "owner@example.com",
+                "password": "password-123",
+            },
+        )
+        token = register_response.get_json()["token"]
+
+        seed_response = self.client.post(
+            "/api/cloud/accounts/sync",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "accounts": [
+                    {
+                        "email_address": "keep@example.com",
+                        "provider": "microsoft",
+                        "group_name": "A",
+                        "status": "正常",
+                        "import_sequence": 1,
+                    },
+                    {
+                        "email_address": "delete-one@example.com",
+                        "provider": "microsoft",
+                        "group_name": "A",
+                        "status": "正常",
+                        "import_sequence": 2,
+                    },
+                    {
+                        "email_address": "delete-two@example.com",
+                        "provider": "microsoft",
+                        "group_name": "A",
+                        "status": "正常",
+                        "import_sequence": 3,
+                    },
+                ],
+                "replace_missing": True,
+            },
+        )
+        self.assertEqual(seed_response.status_code, 200)
+
+        replace_response = self.client.post(
+            "/api/cloud/accounts/sync",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "accounts": [
+                    {
+                        "email_address": "keep@example.com",
+                        "provider": "microsoft",
+                        "group_name": "A",
+                        "status": "正常",
+                        "import_sequence": 1,
+                    }
+                ],
+                "replace_missing": True,
+            },
+        )
+
+        self.assertEqual(replace_response.status_code, 200)
+        payload = replace_response.get_json()
+        self.assertEqual(payload["data"]["upserted"], 1)
+        self.assertEqual(payload["data"]["deleted"], 2)
+        self.assertEqual(payload["data"]["total"], 1)
 
     def test_cloud_secrets_use_auth_token_and_stay_out_of_plain_cloud_sync(self) -> None:
         register_response = self.client.post(
@@ -500,7 +722,13 @@ class BackendAppTestCase(unittest.TestCase):
         self.assertNotIn("password", plain_account)
         self.assertNotIn("twofa_secret", plain_account)
 
-        no_auth_unlock = self.client.post(
+        cookie_unlock = self.client.post(
+            "/api/cloud/secrets/unlock",
+            json={},
+        )
+        self.assertEqual(cookie_unlock.status_code, 200)
+
+        no_auth_unlock = self.app.test_client().post(
             "/api/cloud/secrets/unlock",
             json={},
         )

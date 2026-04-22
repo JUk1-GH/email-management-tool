@@ -24,6 +24,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useEmailStore } from '@/stores/email-store'
 import { localDB } from '@/lib/db'
 import { copyToClipboard } from '@/lib/clipboard'
+import { formatAccountForImport } from '@/lib/format'
 import { toast } from 'sonner'
 
 interface AccountToolbarProps {
@@ -72,19 +73,7 @@ export default function AccountToolbar({
   const handleExport = async () => {
     try {
       const data = await localDB.exportData()
-      const lines = data.accounts.map((acc) =>
-        [
-          acc.provider || 'microsoft',
-          acc.邮箱地址 || '',
-          acc.密码 || '',
-          acc.辅助邮箱 || '',
-          acc.两步验证 || '',
-          acc.client_id || '',
-          acc.刷新令牌 || '',
-          acc.令牌过期时间 || '',
-          acc.分组 || '默认分组',
-        ].join('----')
-      )
+      const lines = data.accounts.map((acc) => formatAccountForImport(acc))
       const textContent = lines.join('\n')
       const blob = new Blob([textContent], {
         type: 'text/plain;charset=utf-8',

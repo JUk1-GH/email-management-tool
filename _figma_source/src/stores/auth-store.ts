@@ -38,8 +38,8 @@ interface AuthState {
 
   init: () => Promise<void>
   refreshMe: () => Promise<void>
-  login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string, displayName?: string) => Promise<void>
+  login: (email: string, password: string, captchaToken?: string) => Promise<void>
+  register: (email: string, password: string, displayName?: string, captchaToken?: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -54,32 +54,17 @@ export const useAuthStore = create<AuthState>((set) => ({
   error: '',
 
   init: async () => {
-    const token = getStoredAuthToken()
-    if (!token) {
-      set({
-        initialized: true,
-        authenticating: false,
-        status: 'anonymous',
-        token: '',
-        user: null,
-        profile: null,
-        cloudSummary: null,
-        error: '',
-      })
-      return
-    }
-
-    set({ status: 'loading', token, authenticating: false })
+    setStoredAuthToken('')
+    set({ status: 'loading', token: '', authenticating: false })
 
     try {
       const payload = await fetchCurrentUser()
       set({
         initialized: true,
         authenticating: false,
-        ...applyAuthState(payload, token),
+        ...applyAuthState(payload, ''),
       })
     } catch (error) {
-      setStoredAuthToken('')
       set({
         initialized: true,
         authenticating: false,
@@ -94,33 +79,19 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   refreshMe: async () => {
-    const token = getStoredAuthToken()
-    if (!token) {
-      set({
-        status: 'anonymous',
-        token: '',
-        user: null,
-        profile: null,
-        cloudSummary: null,
-        error: '',
-      })
-      return
-    }
-
     const payload = await fetchCurrentUser()
-    set(applyAuthState(payload, token))
+    set(applyAuthState(payload, ''))
   },
 
-  login: async (email, password) => {
+  login: async (email, password, captchaToken = '') => {
     set({ authenticating: true, error: '' })
     try {
-      const payload = await loginWithEmail(email, password)
-      const token = payload.token || ''
-      setStoredAuthToken(token)
+      const payload = await loginWithEmail(email, password, captchaToken)
+      setStoredAuthToken('')
       set({
         initialized: true,
         authenticating: false,
-        ...applyAuthState(payload, token),
+        ...applyAuthState(payload, ''),
       })
     } catch (error) {
       set({
@@ -137,16 +108,15 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  register: async (email, password, displayName = '') => {
+  register: async (email, password, displayName = '', captchaToken = '') => {
     set({ authenticating: true, error: '' })
     try {
-      const payload = await registerWithEmail(email, password, displayName)
-      const token = payload.token || ''
-      setStoredAuthToken(token)
+      const payload = await registerWithEmail(email, password, displayName, captchaToken)
+      setStoredAuthToken('')
       set({
         initialized: true,
         authenticating: false,
-        ...applyAuthState(payload, token),
+        ...applyAuthState(payload, ''),
       })
     } catch (error) {
       set({
@@ -165,9 +135,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   logout: async () => {
     try {
-      if (getStoredAuthToken()) {
-        await logoutCurrentUser()
-      }
+      await logoutCurrentUser()
     } finally {
       setStoredAuthToken('')
       set({

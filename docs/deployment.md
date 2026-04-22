@@ -38,6 +38,11 @@ npm run dev
 - `JEMAIL_DB_PATH`：SQLite 数据库文件路径
 - `JEMAIL_SENSITIVE_KEY_PATH`：完整账号资料加密 key 文件路径
 - `JEMAIL_AUTH_SESSION_TTL_DAYS`：登录会话有效天数
+- `JEMAIL_LOGIN_MAX_FAILED_ATTEMPTS`：登录失败次数上限
+- `JEMAIL_LOGIN_RATE_WINDOW_MINUTES`：登录失败统计窗口
+- `JEMAIL_LOGIN_LOCKOUT_MINUTES`：触发限速后的锁定时间
+- `JEMAIL_TURNSTILE_SITE_KEY`：Cloudflare Turnstile 前端 site key
+- `JEMAIL_TURNSTILE_SECRET_KEY`：Cloudflare Turnstile 后端 secret key
 - `JEMAIL_FRONTEND_DIR`：前端静态目录
 - `JEMAIL_GOOGLE_CLIENT_ID`
 - `JEMAIL_GOOGLE_CLIENT_SECRET`

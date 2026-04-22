@@ -3,6 +3,7 @@ import { DownloadCloud, KeyRound, UploadCloud } from 'lucide-react'
 import { toast } from 'sonner'
 import { localDB } from '@/lib/db'
 import { syncCloudSecrets, unlockCloudSecrets } from '@/lib/api'
+import { formatAccountForImport } from '@/lib/format'
 import { useAccountStore } from '@/stores/account-store'
 import { useAuthStore } from '@/stores/auth-store'
 import type { Account, CloudSecretRecord } from '@/types'
@@ -43,17 +44,17 @@ function mergeForExport(accounts: Account[], secrets: CloudSecretRecord[]): stri
   return secrets
     .map((secret) => {
       const account = accountByEmail.get(secret.email_address.toLowerCase())
-      return [
-        secret.provider || account?.provider || 'microsoft',
-        secret.email_address,
-        secret.password || account?.密码 || '',
-        secret.recovery_email || account?.辅助邮箱 || '',
-        secret.twofa_secret || account?.两步验证 || '',
-        secret.client_id || account?.client_id || '',
-        secret.refresh_token || account?.刷新令牌 || '',
-        secret.token_expires_at || account?.令牌过期时间 || '',
-        secret.group_name || account?.分组 || '默认分组',
-      ].join('----')
+      return formatAccountForImport({
+        provider: secret.provider || account?.provider || 'microsoft',
+        邮箱地址: secret.email_address,
+        密码: secret.password || account?.密码 || '',
+        辅助邮箱: secret.recovery_email || account?.辅助邮箱 || '',
+        两步验证: secret.twofa_secret || account?.两步验证 || '',
+        client_id: secret.client_id || account?.client_id || '',
+        刷新令牌: secret.refresh_token || account?.刷新令牌 || '',
+        令牌过期时间: secret.token_expires_at || account?.令牌过期时间 || '',
+        分组: secret.group_name || account?.分组 || '默认分组',
+      })
     })
     .join('\n')
 }
