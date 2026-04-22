@@ -8,15 +8,14 @@
 - 支持 Gmail 账号通过官方 OAuth + Gmail API 拉取邮件
 - 账号数据优先保存在浏览器本地，同时支持登录后同步普通资料和加密完整凭据
 - 由后端按需刷新微软或 Google 令牌，再按 provider 拉取邮件
-- 支持本地部署和服务器部署
+- 公开源码，方便自行修改、二次开发和自用
 
-## 当前真实架构
+## 当前主线结构
 
 当前生产主线代码是：
 
 - 前端：`jemail-app/`
 - 后端：`jemail-backend/`
-- Web 服务：`nginx -> gunicorn -> Flask`
 - 邮件协议：优先 `IMAP XOAUTH2`
 
 前端不是传统“全量托管凭据”的 SaaS，而是一个本地优先、登录后可同步普通资料的管理台：
@@ -145,7 +144,7 @@ cd /Volumes/SSD/Email\ Tool/_figma_source
 npm run dev
 ```
 
-React 前端默认从当前页面 origin 推断 API；如果改成分离部署，请确保后端 `JEMAIL_CORS_ORIGIN` 允许该前端来源，也可以通过 `jemail-app/config.js` 手动指定 `API_BASE`。
+React 前端默认从当前页面 origin 推断 API；如果你的接口地址不是当前页面 origin，可以通过 `jemail-app/config.js` 或运行时配置指定 `API_BASE`。
 
 ## 测试
 
@@ -178,24 +177,25 @@ Gmail 最少验证：
 - Google OAuth consent screen 处于 Testing 状态时，refresh token 可能在 7 天后失效
 - 这不是代码缺陷，而是 Google 测试模式限制
 
-## 部署概览
+## 运行说明
 
-当前仓库推荐两种部署方式：
+仓库主要提供：
 
-1. 本地部署
-- 本地启动 Flask
-- 旧版前端可直接由 Flask 托管
+1. 本地运行方式
+- 直接启动 Flask
+- 旧版前端可由 Flask 托管
 - 新版 React 前端可用 `npm run dev` 联调
 
-2. 服务器部署
-- 一台 Linux 服务器同时托管前端和后端
-- `nginx` 对外提供 `80/443`
-- `gunicorn` 在 `127.0.0.1:8788` 提供 Flask 服务
-- 详细见 `docs/deployment.md` 和 `jemail-backend/deploy/`
+2. 必要环境变量说明
+- 数据库路径
+- Google OAuth 配置
+- 接口地址配置
+
+具体服务器部署方式不在公开文档里展开，按你自己的环境处理即可。
 
 ## 进一步阅读
 
 - [AI 接手说明](AGENTS.md)
 - [架构说明](docs/architecture.md)
 - [开发指南](docs/development.md)
-- [部署与运维](docs/deployment.md)
+- [运行说明](docs/deployment.md)

@@ -187,11 +187,7 @@ cd /Volumes/SSD/Email\ Tool/jemail-backend
 仓库里当前主要保留两种说明：
 
 - 本地部署
-- 服务器部署
-
-服务器部署的典型链路是：
-
-- `nginx -> gunicorn -> Flask`
+- 自行部署
 
 ## 提交前检查
 

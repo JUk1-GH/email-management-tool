@@ -38,12 +38,12 @@ python app.py
 
 默认会把 `/Volumes/SSD/Email Tool/jemail-app` 当成前端目录并托管到同源。
 
-如果你采用前后端分离结构，也可以只把它当纯 API 服务运行。
+如果你把前端放在别的地址，也可以只把它当纯 API 服务运行。
 
 ## 环境变量
 
 - `JEMAIL_FRONTEND_DIR`：前端静态目录
-- `JEMAIL_CORS_ORIGIN`：允许跨域的前端来源，例如 `https://app.example.com`
+- `JEMAIL_CORS_ORIGIN`：允许跨域的前端来源；如果前后端不在同一地址可按需设置
 - `JEMAIL_IMAP_HOST`：默认 `outlook.office365.com`
 - `JEMAIL_IMAP_PORT`：默认 `993`
 - `JEMAIL_IMAP_TIMEOUT`：默认 `20`
@@ -180,9 +180,8 @@ http://127.0.0.1:8788/api/oauth/google/callback
 }
 ```
 
-## 服务器部署
+## 说明
 
-- 前端和后端可以放在同一台服务器
-- 也可以把前端放在静态托管，后端单独作为 API 服务
-
-配套脚本和模板在 `deploy/` 目录里。
+- 这个后端既可以本地运行，也可以部署到你自己的服务器环境
+- 配套脚本和模板保留在 `deploy/` 目录里
+- 公开文档不展开具体平台或运维结构细节
