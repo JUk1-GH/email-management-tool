@@ -140,19 +140,21 @@ h1, h2, h3, h4, h5, h6 { margin: 16px 0 12px 0; line-height: 1.3; }
   return (
     <div className="flex-1 flex flex-col min-w-0">
       {/* Email header */}
-      <div className="px-5 py-4 border-b border-slate-200/50 bg-white/40">
-        <h2 className="text-[16px] font-semibold text-slate-800 mb-2">
+      <div className="border-b border-slate-200/50 bg-white/40 px-3 py-3 sm:px-5 sm:py-4">
+        <h2 className="mb-2 text-[15px] font-semibold text-slate-800 sm:text-[16px]">
           {email.subject || '(无主题)'}
         </h2>
-        <div className="flex items-center gap-3 text-[13px] text-slate-500">
-          <span>
+        <div className="flex flex-col gap-1 text-[12px] text-slate-500 sm:flex-row sm:items-center sm:gap-3 sm:text-[13px]">
+          <span className="min-w-0 break-all">
             <span className="text-slate-700 font-medium">
               {email.from_name || '未知'}
             </span>{' '}
             &lt;{email.from_address}&gt;
           </span>
-          <span className="text-slate-300">|</span>
-          <span>{formatTime(email.received_time)}</span>
+          <span className="hidden text-slate-300 sm:inline">|</span>
+          <span className="text-[12px] text-slate-400 sm:text-[13px]">
+            {formatTime(email.received_time)}
+          </span>
         </div>
       </div>
 

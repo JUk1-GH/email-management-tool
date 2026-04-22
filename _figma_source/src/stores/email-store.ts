@@ -64,14 +64,33 @@ interface EmailState {
   filteredEmails: Email[]
   emailSearch: string
   loading: boolean
+  refreshing: boolean
   currentEmailDetail: Email | null
 
   open: (email: string) => Promise<void>
   close: () => void
   switchFolder: (folder: 'inbox' | 'junkemail') => void
+  loadCachedEmails: (
+    email?: string,
+    folder?: 'inbox' | 'junkemail'
+  ) => Promise<void>
   refreshFromServer: () => Promise<void>
   filterEmails: (keyword: string) => void
   showDetail: (email: Email) => Promise<void>
+  clearDetail: () => void
+}
+
+function applyEmailFilter(emails: Email[], keyword: string): Email[] {
+  const normalizedKeyword = keyword.trim().toLowerCase()
+  if (!normalizedKeyword) {
+    return emails
+  }
+
+  return emails.filter(
+    (email) =>
+      (email.subject || '').toLowerCase().includes(normalizedKeyword) ||
+      (email.from_address || '').toLowerCase().includes(normalizedKeyword)
+  )
 }
 
 export const useEmailStore = create<EmailState>((set, get) => ({
@@ -82,6 +101,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
   filteredEmails: [],
   emailSearch: '',
   loading: false,
+  refreshing: false,
   currentEmailDetail: null,
 
   open: async (email) => {
@@ -94,10 +114,14 @@ export const useEmailStore = create<EmailState>((set, get) => ({
       emailSearch: '',
       visible: true,
     })
+
     try {
+      await get().loadCachedEmails(email, 'inbox')
       await get().refreshFromServer()
     } catch (error) {
-      set({ visible: false })
+      if (get().emails.length === 0) {
+        set({ visible: false })
+      }
       throw error
     }
   },
@@ -110,11 +134,31 @@ export const useEmailStore = create<EmailState>((set, get) => ({
 
   switchFolder: (folder) => {
     set({ currentFolder: folder, currentEmailDetail: null })
-    get().refreshFromServer()
+    void get().loadCachedEmails(get().currentEmail, folder)
+    void get().refreshFromServer()
+  },
+
+  loadCachedEmails: async (email, folder) => {
+    const targetEmail = email || get().currentEmail
+    const targetFolder = folder || get().currentFolder
+    if (!targetEmail) {
+      return
+    }
+
+    const cachedEmails = await localDB.getEmails(targetEmail, targetFolder)
+    const keyword = get().emailSearch
+    set({
+      emails: cachedEmails,
+      filteredEmails: applyEmailFilter(cachedEmails, keyword),
+    })
   },
 
   refreshFromServer: async () => {
-    set({ loading: true })
+    const hasVisibleEmails = get().emails.length > 0
+    set({
+      loading: !hasVisibleEmails,
+      refreshing: hasVisibleEmails,
+    })
     const { currentEmail, currentFolder } = get()
 
     try {
@@ -189,6 +233,7 @@ export const useEmailStore = create<EmailState>((set, get) => ({
         邮箱地址: currentEmail,
         folder: currentFolder,
       }))
+      await localDB.replaceEmails(currentEmail, currentFolder, emails)
 
       await localDB.updateAccount(currentEmail, {
         状态: '正常',
@@ -204,13 +249,16 @@ export const useEmailStore = create<EmailState>((set, get) => ({
           provider === 'google' ? true : currentAccount.权限已检测,
       })
       useAccountStore.getState().loadAccounts()
-      set({ emails, filteredEmails: emails })
+      set({
+        emails,
+        filteredEmails: applyEmailFilter(emails, get().emailSearch),
+      })
       return
     } catch (error) {
       console.error('刷新邮件失败:', error)
       throw error
     } finally {
-      set({ loading: false })
+      set({ loading: false, refreshing: false })
     }
   },
 
@@ -219,12 +267,12 @@ export const useEmailStore = create<EmailState>((set, get) => ({
     const kw = keyword.toLowerCase()
     const { emails } = get()
     set({
-      filteredEmails: emails.filter(
-        (e) =>
-          (e.subject || '').toLowerCase().includes(kw) ||
-          (e.from_address || '').toLowerCase().includes(kw)
-      ),
+      filteredEmails: applyEmailFilter(emails, kw),
     })
+  },
+
+  clearDetail: () => {
+    set({ currentEmailDetail: null })
   },
 
   showDetail: async (email) => {

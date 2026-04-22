@@ -90,6 +90,21 @@ function normalizeAccountRecord(
   }
 }
 
+function buildEmailCacheKey(email: Partial<Email>): string {
+  const emailAddress = normalizeEmailKey(email.邮箱地址)
+  const folder = String(email.folder || 'inbox').trim() || 'inbox'
+  const remoteId = String(email.id ?? '').trim()
+  const receivedTime = String(email.received_time || '').trim()
+  const subject = String(email.subject || '').trim()
+  const fromAddress = String(email.from_address || '').trim()
+
+  return [
+    emailAddress,
+    folder,
+    remoteId || receivedTime || subject || fromAddress || crypto.randomUUID(),
+  ].join('::')
+}
+
 function mergeAccountRecords(primary: Account, incoming: Account): Account {
   const primaryHasSecrets = Boolean(
     primary.密码 ||
@@ -135,7 +150,7 @@ function mergeAccountRecords(primary: Account, incoming: Account): Account {
  */
 class LocalDatabase {
   private dbName = 'EmailManagementDB'
-  private version = 3
+  private version = 4
   private db: IDBDatabase | null = null
 
   async init(): Promise<IDBDatabase> {
@@ -189,16 +204,20 @@ class LocalDatabase {
         }
 
         // 创建邮件表
+        if (oldVersion < 4 && db.objectStoreNames.contains('emails')) {
+          db.deleteObjectStore('emails')
+        }
+
         if (!db.objectStoreNames.contains('emails')) {
           const emailStore = db.createObjectStore('emails', {
-            keyPath: 'id',
-            autoIncrement: true,
+            keyPath: 'cache_key',
           })
           emailStore.createIndex('邮箱地址', '邮箱地址', { unique: false })
           emailStore.createIndex('folder', 'folder', { unique: false })
           emailStore.createIndex('邮箱_文件夹', ['邮箱地址', 'folder'], {
             unique: false,
           })
+          emailStore.createIndex('remote_id', 'remote_id', { unique: false })
         }
       }
     })
@@ -486,19 +505,48 @@ class LocalDatabase {
     })
   }
 
-  async saveEmails(emails: Partial<Email>[]): Promise<number> {
+  async replaceEmails(
+    emailAddress: string,
+    folder: string,
+    emails: Partial<Email>[]
+  ): Promise<number> {
+    const normalizedEmail = normalizeEmailKey(emailAddress)
+    const normalizedFolder = String(folder || 'inbox').trim() || 'inbox'
+
     return new Promise((resolve, reject) => {
       const transaction = this.getDB().transaction(['emails'], 'readwrite')
       const store = transaction.objectStore('emails')
+      const index = store.index('邮箱_文件夹')
       let count = 0
 
-      emails.forEach((email) => {
-        const request = store.put({
-          ...email,
-          邮箱地址: normalizeEmailKey((email as Partial<Email>).邮箱地址),
+      const deleteRequest = index.openCursor(
+        IDBKeyRange.only([normalizedEmail, normalizedFolder])
+      )
+
+      deleteRequest.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+        if (cursor) {
+          cursor.delete()
+          cursor.continue()
+          return
+        }
+
+        emails.forEach((email) => {
+          const normalizedEmailRecord = {
+            ...email,
+            邮箱地址: normalizedEmail,
+            folder: normalizedFolder as Email['folder'],
+          }
+          const request = store.put({
+            ...normalizedEmailRecord,
+            remote_id: String(email.id ?? '').trim(),
+            cache_key: buildEmailCacheKey(normalizedEmailRecord),
+          })
+          request.onsuccess = () => count++
         })
-        request.onsuccess = () => count++
-      })
+      }
+
+      deleteRequest.onerror = () => reject(deleteRequest.error)
 
       transaction.oncomplete = () => resolve(count)
       transaction.onerror = () => reject(transaction.error)

@@ -13,9 +13,10 @@ export default function EmailList() {
   const currentEmailDetail = useEmailStore((s) => s.currentEmailDetail)
   const showDetail = useEmailStore((s) => s.showDetail)
   const loading = useEmailStore((s) => s.loading)
+  const refreshing = useEmailStore((s) => s.refreshing)
 
   return (
-    <div className="w-[320px] flex-shrink-0 border-r border-slate-200/50 flex flex-col">
+    <div className="w-full flex-shrink-0 border-r border-slate-200/50 flex flex-col sm:w-[320px]">
       {/* Folder tabs */}
       <div className="flex border-b border-slate-200/50 px-3 pt-3">
         <button
@@ -57,6 +58,11 @@ export default function EmailList() {
             className="w-full pl-8 pr-3 py-1.5 text-[13px] bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30"
           />
         </div>
+        {refreshing ? (
+          <div className="mt-2 text-[12px] text-blue-500">
+            正在后台刷新邮件...
+          </div>
+        ) : null}
       </div>
 
       {/* Email list */}
