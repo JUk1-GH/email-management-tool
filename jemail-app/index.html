@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>邮箱管理系统</title>
+    
+    <!-- 本地资源加载 - 不依赖CDN -->
+    
+    <!-- Element Plus CSS - 本地加载 -->
+    <link rel="stylesheet" href="libs/element-plus.css">
+    
+    <!-- Vue 3 - 本地加载 -->
+    <script src="libs/vue.global.prod.js"></script>
+    
+    <!-- Element Plus JS - 本地加载 -->
+    <script src="libs/element-plus.min.js"></script>
+    
+    <!-- Element Plus Icons - 本地加载 -->
+    <script src="libs/element-plus-icons.min.js"></script>
+    
+    <!-- Axios - 本地加载 -->
+    <script src="libs/axios.min.js"></script>
+    
+    <!-- SheetJS (XLSX) - 本地加载 -->
+    <script src="libs/xlsx.full.min.js"></script>
+    
+    <!-- 自定义样式 -->
+    <link rel="stylesheet" href="style.css">
+
+    <!-- 防止Vue初始化前闪烁 -->
+    <style>
+        [v-cloak] {
+            display: none !important;
+        }
+
+        /* 固定表格行高，防止内容变化时跳动 */
+        .el-table .el-table__row {
+            height: 60px !important;
+        }
+
+        .el-table .el-table__cell {
+            padding: 8px 0 !important;
+            height: 60px !important;
+            box-sizing: border-box !important;
+        }
+
+        /* 确保单元格内容垂直居中 */
+        .el-table .el-table__cell .cell {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            min-height: 44px !important;
+        }
+
+        /* 邮件对话框遮罩层透明（允许点击关闭，但不变暗） */
+        .transparent-modal {
+            background-color: transparent !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="app" v-cloak>
+        <el-container class="app-container">
+            <!-- 左侧边栏 -->
+            <el-aside width="260px" class="sidebar">
+                <div class="sidebar-header">
+                    <el-icon :size="32" color="#fff"><Message /></el-icon>
+                    <h2>邮箱管家</h2>
+                </div>
+                
+                <div class="sidebar-menu">
+                    <div class="menu-item active">
+                        <el-icon><Grid /></el-icon>
+                        <span>总览</span>
+                    </div>
+                    <div class="menu-item">
+                        <el-icon><List /></el-icon>
+                        <span>邮箱列表</span>
+                    </div>
+                    <div class="menu-item">
+                        <el-icon><Folder /></el-icon>
+                        <span>分组管理</span>
+                    </div>
+                </div>
+                
+                <div class="sidebar-stats">
+                    <div class="stats-icon">
+                        <el-icon><Message /></el-icon>
+                    </div>
+                    <div class="stats-label">总邮箱数</div>
+                    <div class="stats-value">{{ total }}</div>
+                </div>
+            </el-aside>
+            
+            <!-- 主内容区 -->
+            <el-main class="main-content">
+                
+                <!-- 头部 -->
+                <div class="page-header">
+                    <div>
+                        <h1>邮箱管理</h1>
+                        <p>管理您的所有邮箱账号</p>
+                    </div>
+                    <div class="header-actions">
+                        <el-button circle>
+                            <el-icon><Bell /></el-icon>
+                        </el-button>
+                        <el-button circle>
+                            <el-icon><User /></el-icon>
+                        </el-button>
+                    </div>
+                </div>
+                
+                <!-- 工具栏 -->
+                <div class="toolbar">
+                    <el-input
+                        v-model="search"
+                        placeholder="搜索邮箱地址..."
+                        @input="handleSearch"
+                        style="width: 320px"
+                        clearable
+                    >
+                        <template #prefix>
+                            <el-icon><Search /></el-icon>
+                        </template>
+                    </el-input>
+                    
+                    <el-select
+                        v-model="selectedGroup"
+                        placeholder="分组筛选"
+                        @change="handleGroupChange"
+                        style="width: 180px"
+                    >
+                        <el-option label="全部" value="全部"></el-option>
+                        <el-option
+                            v-for="group in groups"
+                            :key="group.name"
+                            :label="group.name"
+                            :value="group.name"
+                        >
+                            <span :style="{color: group.color}">● {{ group.name }}</span>
+                        </el-option>
+                    </el-select>
+
+                    <!-- 权限检测进度提示 -->
+                    <div v-if="permissionDetecting" style="margin-left: 20px;">
+                        <el-tag type="info" effect="plain">
+                            <el-icon class="is-loading"><Loading /></el-icon>
+                            权限检测中... {{ permissionDetectProgress }} / {{ permissionDetectTotal }}
+                        </el-tag>
+                    </div>
+
+                    <el-button type="primary" @click="openImportDialog" style="margin-left: 12px;">
+                        <el-icon><Upload /></el-icon>
+                        导入邮箱
+                    </el-button>
+                    
+                    <el-button type="warning" @click="exportData">
+                        <el-icon><Download /></el-icon>
+                        导出备份
+                    </el-button>
+                    
+                    <el-dropdown @command="handleBatchCopy">
+                        <el-button type="success">
+                            <el-icon><Document /></el-icon>
+                            批量复制
+                            <el-icon class="el-icon--right"><Bottom /></el-icon>
+                        </el-button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item command="accounts">
+                                    <el-icon><Message /></el-icon>
+                                    批量复制账号
+                                </el-dropdown-item>
+                                <el-dropdown-item command="passwords">
+                                    <el-icon><Lock /></el-icon>
+                                    批量复制密码
+                                </el-dropdown-item>
+                                <el-dropdown-item command="both">
+                                    <el-icon><Document /></el-icon>
+                                    批量复制账号----密码
+                                </el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
+                    
+                    <el-button type="primary" @click="openGroupDialog">
+                        <el-icon><Collection /></el-icon>
+                        批量设置分组
+                    </el-button>
+                    
+                    <el-button type="danger" @click="handleBatchDelete">
+                        <el-icon><Delete /></el-icon>
+                        批量删除
+                    </el-button>
+                </div>
+                
+                <!-- 表格 -->
+                <div class="table-container">
+                    <el-table
+                        ref="table"
+                        :data="accounts"
+                        v-loading="loading"
+                        @selection-change="handleSelectionChange"
+                        style="width: 100%"
+                        :row-style="{ height: '60px' }"
+                        :cell-style="{ padding: '8px 0' }"
+                    >
+                        <el-table-column type="selection" width="55"></el-table-column>
+                        
+                        <el-table-column label="#" width="60" align="center">
+                            <template #default="scope">
+                                {{ (currentPage - 1) * pageSize + scope.$index + 1 }}
+                            </template>
+                        </el-table-column>
+                        
+                        <el-table-column label="邮箱地址" prop="邮箱地址" width="320">
+                            <template #default="scope">
+                                <div class="email-cell-tight">
+                                    <span>{{ scope.row.邮箱地址 }}</span>
+                                    <span
+                                        @click="copyText(scope.row.邮箱地址, '账号')"
+                                        class="copy-icon-btn"
+                                        title="点击复制"
+                                    >
+                                        <svg viewBox="0 0 1024 1024" width="18" height="18">
+                                            <path d="M720 192h-544A80.096 80.096 0 0 0 96 272v608C96 924.128 131.904 960 176 960h544c44.128 0 80-35.872 80-80v-608C800 227.904 764.128 192 720 192z m0 688H176V272h544v608z" fill="currentColor"></path>
+                                            <path d="M848 64h-544C259.904 64 224 99.904 224 144V160h64v-16c0-8.8 7.2-16 16-16h544c8.8 0 16 7.2 16 16v608c0 8.8-7.2 16-16 16h-16v64h16c44.128 0 80-35.872 80-80V144C928 99.904 892.128 64 848 64z" fill="currentColor"></path>
+                                        </svg>
+                                    </span>
+                                </div>
+                            </template>
+                        </el-table-column>
+                        
+                        <el-table-column label="密码" prop="密码" width="180">
+                            <template #default="scope">
+                                <div class="email-cell-tight">
+                                    <span>{{ scope.row.密码 || '无' }}</span>
+                                    <span
+                                        v-if="scope.row.密码"
+                                        @click="copyText(scope.row.密码, '密码')"
+                                        class="copy-icon-btn"
+                                        title="点击复制"
+                                    >
+                                        <svg viewBox="0 0 1024 1024" width="18" height="18">
+                                            <path d="M720 192h-544A80.096 80.096 0 0 0 96 272v608C96 924.128 131.904 960 176 960h544c44.128 0 80-35.872 80-80v-608C800 227.904 764.128 192 720 192z m0 688H176V272h544v608z" fill="currentColor"></path>
+                                            <path d="M848 64h-544C259.904 64 224 99.904 224 144V160h64v-16c0-8.8 7.2-16 16-16h544c8.8 0 16 7.2 16 16v608c0 8.8-7.2 16-16 16h-16v64h16c44.128 0 80-35.872 80-80V144C928 99.904 892.128 64 848 64z" fill="currentColor"></path>
+                                        </svg>
+                                    </span>
+                                </div>
+                            </template>
+                        </el-table-column>
+                        
+                        <el-table-column label="分组" width="120" align="center">
+                            <template #default="scope">
+                                <el-tag 
+                                    size="small"
+                                    :style="{backgroundColor: getGroupColor(scope.row.分组), color: '#fff', border: 'none'}"
+                                >
+                                    {{ scope.row.分组 || '默认分组' }}
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+                        
+                        <el-table-column label="令牌" width="100" align="center">
+                            <template #default="scope">
+                                <el-tag 
+                                    v-if="scope.row.刷新令牌 === '封禁'" 
+                                    type="danger" 
+                                    size="small"
+                                >
+                                    ❌ 封禁
+                                </el-tag>
+                                <el-tag 
+                                    v-else-if="scope.row.刷新令牌 === '锁定'" 
+                                    type="warning" 
+                                    size="small"
+                                >
+                                    🔒 锁定
+                                </el-tag>
+                                <el-tag 
+                                    v-else-if="scope.row.刷新令牌 === '过期'" 
+                                    type="warning" 
+                                    size="small"
+                                    effect="dark"
+                                >
+                                    ⏰ 过期
+                                </el-tag>
+                                <el-tag 
+                                    v-else-if="scope.row.刷新令牌 === '无效'" 
+                                    type="info" 
+                                    size="small"
+                                >
+                                    ❓ 无效
+                                </el-tag>
+                                <el-tag 
+                                    v-else-if="scope.row.刷新令牌 && scope.row.刷新令牌 !== 'nan' && scope.row.刷新令牌.length > 10" 
+                                    type="success" 
+                                    size="small"
+                                >
+                                    ✓ 正常
+                                </el-tag>
+                                <el-tag 
+                                    v-else 
+                                    type="info" 
+                                    size="small"
+                                >
+                                    ✗ 无
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+
+                        <el-table-column label="权限类型" width="120" align="center">
+                            <template #default="scope">
+                                <el-tag
+                                    v-if="scope.row.令牌类型 === 'graph'"
+                                    type="success"
+                                    size="small"
+                                    effect="dark"
+                                >
+                                    📊 Graph
+                                </el-tag>
+                                <el-tag
+                                    v-else-if="scope.row.令牌类型 === 'o2'"
+                                    type="primary"
+                                    size="small"
+                                    effect="dark"
+                                >
+                                    🔐 O2
+                                </el-tag>
+                                <el-tag
+                                    v-else-if="scope.row.令牌类型 === 'imap'"
+                                    type="warning"
+                                    size="small"
+                                >
+                                    📧 IMAP
+                                </el-tag>
+                                <el-tag
+                                    v-else-if="!scope.row.权限已检测 || scope.row.令牌类型 === null"
+                                    type="info"
+                                    size="small"
+                                    effect="plain"
+                                >
+                                    ⏳ 检测中
+                                </el-tag>
+                                <el-tag
+                                    v-else
+                                    type="info"
+                                    size="small"
+                                    effect="plain"
+                                >
+                                    ❓ 未知
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+
+                        <el-table-column label="操作" width="180" fixed="right">
+                            <template #default="scope">
+                                <el-button size="small" type="primary" @click="viewEmails(scope.row.邮箱地址)">
+                                    查看
+                                </el-button>
+                                <el-button size="small" type="danger" @click="deleteAccount(scope.row.邮箱地址)" style="margin-right: 8px;">
+                                    删除
+                                </el-button>
+                                <el-dropdown @command="(cmd) => handleRowMenu(cmd, scope.row)">
+                                    <el-button size="small" circle>
+                                        <el-icon><More /></el-icon>
+                                    </el-button>
+                                    <template #dropdown>
+                                        <el-dropdown-menu>
+                                            <el-dropdown-item command="check">勾选本行</el-dropdown-item>
+                                            <el-dropdown-item command="checkFrom">从本行勾选N个</el-dropdown-item>
+                                            <el-dropdown-item command="checkAll" divided>勾选全部数据</el-dropdown-item>
+                                            <el-dropdown-item command="uncheckAll">取消全部勾选</el-dropdown-item>
+                                        </el-dropdown-menu>
+                                    </template>
+                                </el-dropdown>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                    
+                    <!-- 分页 -->
+                    <div class="pagination">
+                        <div class="pagination-left">
+                            <span>每页</span>
+                            <el-select v-model="pageSize" @change="handlePageSizeChange" style="width: 90px">
+                                <el-option :value="10" label="10"></el-option>
+                                <el-option :value="20" label="20"></el-option>
+                                <el-option :value="50" label="50"></el-option>
+                                <el-option :value="100" label="100"></el-option>
+                                <el-option :value="200" label="200"></el-option>
+                            </el-select>
+                            <span>条</span>
+                            
+                            <el-pagination
+                                v-model:current-page="currentPage"
+                                v-model:page-size="pageSize"
+                                :total="total"
+                                @current-change="loadAccounts"
+                                layout="prev, pager, next, jumper"
+                            />
+                        </div>
+                    </div>
+                </div>
+            </el-main>
+        </el-container>
+        
+        <!-- 邮件查看对话框 - 左右分栏布局 -->
+        <el-dialog
+            v-model="emailDialogVisible"
+            :title="`邮件列表 - ${currentEmail}`"
+            width="1400px"
+            top="5vh"
+            :close-on-click-modal="true"
+            :append-to-body="true"
+            :lock-scroll="true"
+            :modal="true"
+            :modal-class="'transparent-modal'"
+            class="email-dialog-wrapper"
+            @close="onEmailDialogClose"
+        >
+            <div class="email-dialog-container">
+                <!-- 顶部工具栏 -->
+                <div class="email-toolbar">
+                    <el-tabs v-model="currentFolder" @tab-change="switchFolder">
+                        <el-tab-pane label="收件箱" name="inbox"></el-tab-pane>
+                        <el-tab-pane label="垃圾箱" name="junkemail"></el-tab-pane>
+                    </el-tabs>
+                    <el-button type="primary" @click="refreshEmailsFromServer" :loading="emailsLoading" size="small">
+                        <el-icon><Refresh /></el-icon>
+                        刷新邮件
+                    </el-button>
+                </div>
+
+                <!-- 左右分栏布局 -->
+                <div class="email-split-view">
+                    <!-- 左侧：邮件列表 -->
+                    <div class="email-list-panel">
+                        <!-- 搜索框 -->
+                        <div class="email-list-header">
+                            <el-input
+                                v-model="emailSearch"
+                                placeholder="🔍 搜索主题/发件人..."
+                                @input="filterEmails"
+                                clearable
+                                size="small"
+                            />
+                            <div class="email-count">
+                                共 <span style="color: #409eff; font-weight: 500;">{{ filteredEmails.length }}</span> 封邮件
+                            </div>
+                        </div>
+
+                        <!-- 加载状态 -->
+                        <div v-if="emailsLoading" class="email-loading">
+                            <el-icon class="is-loading" :size="30"><Loading /></el-icon>
+                            <p>正在加载邮件...</p>
+                        </div>
+
+                        <!-- 邮件列表 -->
+                        <div v-else class="email-list-items">
+                            <div
+                                v-for="email in filteredEmails"
+                                :key="email.id"
+                                class="email-list-item"
+                                :class="{ active: currentEmailDetail && currentEmailDetail.id === email.id }"
+                                @click="showEmailDetail(email)"
+                            >
+                                <div class="email-list-item-sender">
+                                    {{ email.from_name || email.from_address || '(未知发件人)' }}
+                                </div>
+                                <div class="email-list-item-subject">
+                                    {{ email.subject || '(无主题)' }}
+                                </div>
+                                <div class="email-list-item-preview">
+                                    {{ email.body_preview || '' }}
+                                </div>
+                                <div class="email-list-item-date">
+                                    {{ formatTime(email.received_time) }}
+                                </div>
+                            </div>
+
+                            <div v-if="filteredEmails.length === 0" class="empty-state">
+                                <div style="font-size: 48px; margin-bottom: 16px;">📭</div>
+                                <div>暂无邮件</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 右侧：邮件详情 -->
+                    <div class="email-detail-panel">
+                        <div v-if="!currentEmailDetail" class="email-detail-empty">
+                            <div style="font-size: 48px; margin-bottom: 16px;">📭</div>
+                            <div style="font-size: 14px; color: #80868b;">请从左侧选择一封邮件查看</div>
+                        </div>
+
+                        <div v-else class="email-detail-content">
+                            <div class="email-detail-header">
+                                <div class="email-detail-subject">{{ currentEmailDetail.subject || '(无主题)' }}</div>
+                                <div class="email-detail-meta">
+                                    <div class="meta-row">
+                                        <span class="meta-label">发件人：</span>
+                                        <span class="meta-value">{{ currentEmailDetail.from_name || currentEmailDetail.from_address || '(未知)' }}</span>
+                                    </div>
+                                    <div class="meta-row">
+                                        <span class="meta-label">收件人：</span>
+                                        <span class="meta-value">{{ currentEmail }}</span>
+                                    </div>
+                                    <div class="meta-row">
+                                        <span class="meta-label">时间：</span>
+                                        <span class="meta-value">{{ formatTime(currentEmailDetail.received_time) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="email-detail-body">
+                                <iframe
+                                    ref="emailIframe"
+                                    :srcdoc="currentEmailDetail.body"
+                                    @load="adjustIframeHeight"
+                                    style="width: 100%; border: none; min-height: 500px;"
+                                ></iframe>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </el-dialog>
+        
+        <!-- 导入邮箱对话框 -->
+        <el-dialog
+            v-model="importDialogVisible"
+            title="导入邮箱账号"
+            width="700px"
+            top="10vh"
+            align-center
+        >
+            <el-tabs v-model="importMethod">
+                <el-tab-pane label="文本导入" name="text">
+                   <div style="margin-bottom: 15px; color: #606266; font-size: 14px;">
+                       <div style="margin-bottom: 10px;">支持的格式（每行一个账号）：</div>
+                       <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
+                           <li style="font-family: 'Courier New', monospace;">邮箱地址    密码    Client ID    刷新令牌</li>
+                           <li style="font-family: 'Courier New', monospace;">邮箱地址----密码----Client ID----刷新令牌</li>
+                       </ul>
+                       <div style="margin-top: 8px; color: #909399; font-size: 13px;">
+                           提示：必须包含完整的4个字段，字段间使用 Tab 键或 ---- 分隔
+                       </div>
+                   </div>
+                    
+                   <el-input
+                       v-model="importText"
+                       type="textarea"
+                       :rows="12"
+                       placeholder="请粘贴账号信息，每行一个账号&#10;例如：&#10;user@example.com    password123    client_id    refresh_token&#10;user2@example.com----pass456----client_id2----token2"
+                       style="font-family: monospace;"
+                   />
+                    
+                    <div style="margin-top: 15px; color: #909399; font-size: 13px;">
+                        共 {{ importTextLineCount }} 行
+                    </div>
+                </el-tab-pane>
+                
+                <el-tab-pane label="文件上传" name="file">
+                   <el-upload
+                       ref="uploadRef"
+                       :auto-upload="false"
+                       :show-file-list="true"
+                       :limit="1"
+                       :on-change="handleFileChange"
+                       accept=".txt,.xlsx,.xls"
+                       drag
+                   >
+                        <el-icon class="el-icon--upload"><Upload /></el-icon>
+                        <div class="el-upload__text">
+                            将文件拖到此处，或<em>点击上传</em>
+                        </div>
+                        <template #tip>
+                            <div class="el-upload__tip" style="line-height: 1.8;">
+                                支持 .txt、.xlsx、.xls 格式<br/>
+                                TXT格式：每行一个账号（Tab或----分隔）<br/>
+                                Excel格式：第1列邮箱，第2列密码，第3列ClientID，第4列刷新令牌，第5列过期时间，第6列分组<br/>
+                                <span style="color: #67c23a;">✓ 导入后将按文件中的顺序显示</span>
+                            </div>
+                        </template>
+                    </el-upload>
+                </el-tab-pane>
+            </el-tabs>
+            
+            <template #footer>
+                <el-button @click="importDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="handleImport(false)" :loading="importing">
+                    {{ importing ? '导入中...' : '追加导入' }}
+                </el-button>
+                <el-button type="danger" @click="handleImport(true)" :loading="importing">
+                    {{ importing ? '导入中...' : '覆盖导入' }}
+                </el-button>
+            </template>
+        </el-dialog>
+        
+        <!-- 批量设置分组对话框 -->
+        <el-dialog
+            v-model="groupDialogVisible"
+            title="批量设置分组"
+            width="600px"
+        >
+            <div style="min-height: 280px;">
+                <div style="margin-bottom: 20px;">
+                    <el-alert
+                        :title="`已选中 ${selectedAccounts.length} 个账号`"
+                        type="info"
+                        :closable="false"
+                        show-icon
+                    />
+                </div>
+                
+                <!-- 第一行：管理按钮 -->
+                <div style="margin-bottom: 20px; display: flex; gap: 12px;">
+                <el-button type="success" @click="openAddGroupDialog" style="flex: 1;">
+                    <el-icon style="font-size: 16px;"><Plus /></el-icon>
+                    <span style="font-size: 15px; margin-left: 6px;">新增分组</span>
+                </el-button>
+                <el-button type="danger" @click="openDeleteGroupDialog" style="flex: 1;">
+                    <el-icon style="font-size: 16px;"><Delete /></el-icon>
+                    <span style="font-size: 15px; margin-left: 6px;">删除分组</span>
+                </el-button>
+            </div>
+            
+            <!-- 第二行：选择分组 -->
+            <el-form label-width="90px">
+                <el-form-item label="分组名称">
+                    <el-select
+                        v-model="selectedGroupName"
+                        placeholder="请选择分组"
+                        filterable
+                        size="large"
+                        style="width: 100%"
+                    >
+                        <el-option
+                            v-for="group in groups"
+                            :key="group.name"
+                            :label="group.name"
+                            :value="group.name"
+                        >
+                            <span :style="{color: group.color}">● {{ group.name }}</span>
+                        </el-option>
+                    </el-select>
+                </el-form-item>
+            </el-form>
+            </div>
+            
+            <template #footer>
+                <el-button @click="groupDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="batchUpdateGroup">确定</el-button>
+            </template>
+        </el-dialog>
+        
+        <!-- 新增分组对话框 -->
+        <el-dialog
+            v-model="addGroupDialogVisible"
+            title="新增分组"
+            width="450px"
+            append-to-body
+            destroy-on-close
+        >
+            <div style="min-height: 280px;">
+            <el-form label-width="80px">
+                <el-form-item label="分组名称" required>
+                    <el-input
+                        v-model="newGroupName"
+                        placeholder="请输入分组名称"
+                        maxlength="20"
+                        show-word-limit
+                    />
+                </el-form-item>
+                <el-form-item label="分组颜色" required>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <div
+                            v-for="color in presetColors"
+                            :key="color"
+                            :style="{
+                                width: '40px',
+                                height: '40px',
+                                backgroundColor: color,
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                border: newGroupColor === color ? '3px solid #000' : '1px solid #ddd'
+                            }"
+                            @click="newGroupColor = color"
+                        ></div>
+                    </div>
+                </el-form-item>
+            </el-form>
+            </div>
+            
+            <template #footer>
+                <el-button @click="addGroupDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="addGroup">确定</el-button>
+            </template>
+        </el-dialog>
+        
+        <!-- 删除分组对话框 -->
+        <el-dialog
+            v-model="deleteGroupDialogVisible"
+            title="删除分组"
+            width="550px"
+            append-to-body
+            destroy-on-close
+        >
+            <div style="min-height: 280px; background-color: #ffffff !important; padding: 20px; border-radius: 4px;">
+                <div style="padding: 12px; background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                    <el-icon style="color: #e6a23c; font-size: 18px;"><Warning /></el-icon>
+                    <span style="color: #856404; font-size: 14px;">删除分组后，该分组下的所有账号将被设置为'默认分组'</span>
+                </div>
+                
+                <div style="margin-bottom: 15px; color: #606266; font-size: 14px;">
+                    <span>请选择要删除的分组：</span>
+                    <span v-if="deleteGroupNames.length > 0" style="color: #409eff;">
+                        （已选中 {{ deleteGroupNames.length }} 个）
+                    </span>
+                </div>
+                
+                <div class="group-delete-list">
+                    <div
+                        v-for="group in groupsForDelete"
+                        :key="group.name"
+                        class="group-delete-item"
+                        @click="toggleGroupSelection(group.name)"
+                    >
+                        <el-checkbox
+                            :model-value="deleteGroupNames.includes(group.name)"
+                            @change="toggleGroupSelection(group.name)"
+                            @click.stop
+                        />
+                        <span class="group-delete-color" :style="{backgroundColor: group.color}"></span>
+                        <span class="group-delete-name">{{ group.name }}</span>
+                        <span class="group-delete-count">({{ group.count || 0 }} 个账号)</span>
+                    </div>
+                    
+                    <div v-if="groupsForDelete.length === 0" class="group-delete-empty">
+                        暂无可删除的分组
+                    </div>
+                </div>
+            </div>
+            
+            <template #footer>
+                <el-button @click="deleteGroupDialogVisible = false">取消</el-button>
+                <el-button 
+                    type="danger" 
+                    @click="batchDeleteGroups"
+                    :disabled="deleteGroupNames.length === 0"
+                >
+                    删除选中的分组
+                </el-button>
+            </template>
+        </el-dialog>
+        
+        <!-- 邮件详情对话框 -->
+        <el-dialog
+            v-model="emailDetailVisible"
+            :title="currentEmailDetail?.subject || '(无主题)'"
+            width="900px"
+            top="5vh"
+            @opened="renderEmailInIframe"
+        >
+            <div v-if="currentEmailDetail" class="email-detail">
+                <div class="detail-row">
+                    <strong>发件人：</strong>
+                    <span>{{ currentEmailDetail.from_name }} &lt;{{ currentEmailDetail.from_address }}&gt;</span>
+                </div>
+                <div class="detail-row">
+                    <strong>时间：</strong>
+                    <span>{{ formatTime(currentEmailDetail.received_time) }}</span>
+                </div>
+                <el-divider></el-divider>
+                <div class="email-iframe-container">
+                    <iframe 
+                        ref="emailIframe"
+                        class="email-iframe"
+                        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                        frameborder="0"
+                    ></iframe>
+                </div>
+            </div>
+        </el-dialog>
+    </div>
+    
+    <!-- 隐藏的文件上传input，用于导入备份 -->
+    <input type="file" id="backupFileInput" accept=".json" style="display: none;" />
+
+    <script src="config.js"></script>
+
+    <!-- 等待依赖加载完成后再加载应用脚本 -->
+    <script>
+    (function() {
+        function loadApp() {
+            // 检查依赖是否加载完成
+            if (typeof Vue === 'undefined' || typeof ElementPlus === 'undefined') {
+                setTimeout(loadApp, 50);
+                return;
+            }
+
+            // 加载 db.js
+            var dbScript = document.createElement('script');
+            dbScript.src = 'db.js?v=20251028';
+            dbScript.onload = function() {
+                // 加载 main.js
+                var mainScript = document.createElement('script');
+                mainScript.src = 'main.js?v=20251028';
+                document.body.appendChild(mainScript);
+            };
+            document.body.appendChild(dbScript);
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', loadApp);
+        } else {
+            loadApp();
+        }
+    })();
+    </script>
+</body>
+</html>
+

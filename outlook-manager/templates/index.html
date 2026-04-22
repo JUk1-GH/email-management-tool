@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Outlook Manager</title>
+    <style>
+      :root {
+        --bg: #0b1020;
+        --panel: #121a2f;
+        --panel-2: #0f172a;
+        --line: #24304d;
+        --text: #e5eefc;
+        --muted: #93a4c5;
+        --accent: #38bdf8;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 30%),
+          radial-gradient(circle at bottom right, rgba(34, 197, 94, 0.12), transparent 24%),
+          var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--line);
+        backdrop-filter: blur(12px);
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 280px 260px 1fr;
+        min-height: calc(100vh - 66px);
+      }
+      .panel {
+        border-right: 1px solid var(--line);
+        padding: 14px;
+        overflow: auto;
+      }
+      .panel:last-child {
+        border-right: 0;
+      }
+      .panel-title {
+        margin: 0 0 12px;
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+      .list-item {
+        width: 100%;
+        margin-bottom: 8px;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid transparent;
+        background: var(--panel);
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .list-item.active {
+        border-color: var(--accent);
+        background: #12233f;
+      }
+      .message-item {
+        padding: 12px;
+        margin-bottom: 10px;
+        border-radius: 12px;
+        background: var(--panel);
+        border: 1px solid transparent;
+        cursor: pointer;
+      }
+      .message-item.active {
+        border-color: var(--accent);
+      }
+      .message-item strong,
+      .list-item strong {
+        display: block;
+        font-size: 14px;
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      .viewer {
+        padding: 20px;
+        overflow: auto;
+      }
+      iframe {
+        width: 100%;
+        min-height: calc(100vh - 150px);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: white;
+      }
+      .loading {
+        color: var(--muted);
+        padding: 24px 0;
+      }
+      @media (max-width: 1100px) {
+        .layout { grid-template-columns: 220px 220px 1fr; }
+      }
+      @media (max-width: 860px) {
+        .layout { grid-template-columns: 1fr; }
+        .panel { border-right: 0; border-bottom: 1px solid var(--line); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <div>
+        <strong>Outlook 邮箱管理工具</strong>
+        <div class="muted">已批量导入 {{ account_emails|length }} 个账号</div>
+      </div>
+      <a href="/logout" style="color: var(--accent); text-decoration: none;">退出</a>
+    </div>
+    <div class="layout">
+      <div class="panel">
+        <h2 class="panel-title">邮箱账号</h2>
+        <div id="accounts"></div>
+      </div>
+      <div class="panel">
+        <h2 class="panel-title">文件夹 / 邮件</h2>
+        <div id="folders"></div>
+        <div id="messages"></div>
+      </div>
+      <div class="viewer">
+        <h2 id="viewerTitle">请选择邮件</h2>
+        <div id="viewerMeta" class="muted"></div>
+        <div id="viewerLoading" class="loading">等待加载内容…</div>
+        <iframe id="viewerFrame" hidden></iframe>
+      </div>
+    </div>
+    <script>
+      const state = {
+        account: null,
+        folder: "INBOX",
+        uid: null,
+      };
+
+      const accountsEl = document.getElementById("accounts");
+      const foldersEl = document.getElementById("folders");
+      const messagesEl = document.getElementById("messages");
+      const viewerTitle = document.getElementById("viewerTitle");
+      const viewerMeta = document.getElementById("viewerMeta");
+      const viewerLoading = document.getElementById("viewerLoading");
+      const viewerFrame = document.getElementById("viewerFrame");
+
+      async function loadAccounts() {
+        const data = await fetch("/api/accounts").then((r) => r.json());
+        accountsEl.innerHTML = "";
+        data.forEach((account, index) => {
+          const btn = document.createElement("button");
+          btn.className = "list-item";
+          btn.innerHTML = `<strong>${account.email}</strong><div class="muted">点击加载文件夹</div>`;
+          btn.onclick = () => selectAccount(account.email);
+          if (index === 0 && !state.account) {
+            state.account = account.email;
+          }
+          accountsEl.appendChild(btn);
+        });
+        if (state.account) {
+          selectAccount(state.account);
+        }
+      }
+
+      async function selectAccount(email) {
+        state.account = email;
+        state.folder = "INBOX";
+        state.uid = null;
+        [...accountsEl.children].forEach((el) => {
+          el.classList.toggle("active", el.textContent.includes(email));
+        });
+        await loadFolders();
+        await loadMessages();
+      }
+
+      async function loadFolders() {
+        foldersEl.innerHTML = `<div class="loading">加载文件夹中…</div>`;
+        const folders = await fetch(`/api/folders?account=${encodeURIComponent(state.account)}`).then((r) => r.json());
+        foldersEl.innerHTML = "";
+        folders.forEach((folder) => {
+          const btn = document.createElement("button");
+          btn.className = "list-item";
+          btn.innerHTML = `<strong>${folder.name}</strong>`;
+          btn.onclick = async () => {
+            state.folder = folder.name;
+            state.uid = null;
+            await loadMessages();
+          };
+          btn.classList.toggle("active", folder.name === state.folder);
+          foldersEl.appendChild(btn);
+        });
+      }
+
+      async function loadMessages() {
+        messagesEl.innerHTML = `<div class="loading">加载邮件中…</div>`;
+        const url = `/api/messages?account=${encodeURIComponent(state.account)}&folder=${encodeURIComponent(state.folder)}&limit=30`;
+        const messages = await fetch(url).then((r) => r.json());
+        messagesEl.innerHTML = "";
+        [...foldersEl.children].forEach((el) => {
+          el.classList.toggle("active", el.textContent.trim() === state.folder);
+        });
+        messages.forEach((msg, index) => {
+          const div = document.createElement("div");
+          div.className = "message-item";
+          div.innerHTML = `<strong>${msg.subject}</strong><div class="muted">${msg.from}</div><div class="muted">${msg.date}</div>`;
+          div.onclick = () => selectMessage(msg);
+          messagesEl.appendChild(div);
+          if (index === 0 && !state.uid) {
+            state.uid = msg.uid;
+            selectMessage(msg);
+          }
+        });
+        if (!messages.length) {
+          messagesEl.innerHTML = `<div class="loading">这个文件夹没有邮件。</div>`;
+          viewerTitle.textContent = "这个文件夹没有邮件";
+          viewerMeta.textContent = "";
+          viewerLoading.hidden = false;
+          viewerFrame.hidden = true;
+        }
+      }
+
+      async function selectMessage(msg) {
+        state.uid = msg.uid;
+        [...messagesEl.children].forEach((el) => {
+          el.classList.toggle("active", el.textContent.includes(msg.subject));
+        });
+        viewerTitle.textContent = msg.subject;
+        viewerMeta.textContent = `${msg.from} · ${msg.date}`;
+        viewerLoading.hidden = false;
+        viewerFrame.hidden = true;
+        const url = `/api/message?account=${encodeURIComponent(state.account)}&folder=${encodeURIComponent(state.folder)}&uid=${encodeURIComponent(msg.uid)}`;
+        const data = await fetch(url).then((r) => r.json());
+        viewerFrame.srcdoc = data.html || "<pre>没有可显示的正文</pre>";
+        viewerFrame.hidden = false;
+        viewerLoading.hidden = true;
+      }
+
+      loadAccounts();
+    </script>
+  </body>
+</html>

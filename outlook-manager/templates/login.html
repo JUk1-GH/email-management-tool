@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Outlook Manager Login</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, #111827, #1f2937);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #f9fafb;
+      }
+      form {
+        width: min(360px, calc(100vw - 32px));
+        padding: 24px;
+        border-radius: 16px;
+        background: rgba(17, 24, 39, 0.9);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 24px;
+      }
+      input,
+      button {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 12px 14px;
+        border-radius: 10px;
+        border: 1px solid #374151;
+        font: inherit;
+      }
+      input {
+        margin: 12px 0;
+        background: #111827;
+        color: #f9fafb;
+      }
+      button {
+        border: 0;
+        background: #0ea5e9;
+        color: #fff;
+        cursor: pointer;
+      }
+      .error {
+        color: #fca5a5;
+        min-height: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <form method="post">
+      <h1>Outlook 管理后台</h1>
+      <p>输入后台密码后进入。</p>
+      <input type="password" name="password" placeholder="后台密码" required />
+      <button type="submit">登录</button>
+      <div class="error">{{ error }}</div>
+    </form>
+  </body>
+</html>

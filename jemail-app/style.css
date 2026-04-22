@@ -1,0 +1,912 @@
+/* 全局样式重置 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f5f7fa;
+    overflow: hidden;
+    /* 启用硬件加速，减少闪烁 */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+}
+
+#app {
+    height: 100vh;
+}
+
+/* 容器 */
+.app-container {
+    height: 100vh;
+}
+
+/* ==================== 左侧边栏 ==================== */
+.sidebar {
+    background: linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%);
+    color: white;
+    display: flex;
+    flex-direction: column;
+    padding: 25px 20px;
+}
+
+.sidebar-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 35px;
+}
+
+.sidebar-header h2 {
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.sidebar-menu {
+    flex: 1;
+}
+
+.menu-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 15px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-bottom: 8px;
+}
+
+.menu-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.menu-item.active {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.menu-item span {
+    font-size: 14px;
+}
+
+.sidebar-stats {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 18px 15px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+.stats-icon {
+    font-size: 24px;
+    margin-bottom: 8px;
+}
+
+.stats-label {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 5px;
+}
+
+.stats-value {
+    font-size: 28px;
+    font-weight: 600;
+}
+
+/* ==================== 主内容区 ==================== */
+.main-content {
+    background: #f5f7fa;
+    padding: 0 !important;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* 页面头部 */
+.page-header {
+    background: white;
+    padding: 25px 35px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.page-header h1 {
+    font-size: 28px;
+    color: #1e293b;
+    margin-bottom: 6px;
+}
+
+.page-header p {
+    font-size: 14px;
+    color: #64748b;
+}
+
+.header-actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* 工具栏 */
+.toolbar {
+    background: white;
+    padding: 20px 35px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+/* 表格容器 */
+.table-container {
+    margin: 35px;
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+    overflow: hidden;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 让表格自动填充剩余空间 */
+.table-container .el-table {
+    flex: 1;
+    height: auto !important;
+}
+
+.table-container .el-table__body-wrapper {
+    max-height: none !important;
+}
+
+/* 邮箱单元格 */
+.email-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.email-cell span {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 紧凑型邮箱单元格（图标紧贴文本） */
+.email-cell-tight {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.email-cell-tight span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.email-cell-tight .copy-icon-btn {
+    flex-shrink: 0;
+}
+
+/* 复制图标按钮样式（SVG图标） */
+.copy-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 8px;
+    margin-left: 6px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    user-select: none;
+    color: #909399;
+    vertical-align: middle;
+    min-width: 35px;
+    min-height: 35px;
+}
+
+.copy-icon-btn:hover {
+    color: #409eff;
+    background-color: #ecf5ff;
+}
+
+.copy-icon-btn svg {
+    display: block;
+}
+
+/* 分组标签样式 */
+.el-tag {
+    font-size: 12px;
+    padding: 0 8px;
+    height: 24px;
+    line-height: 22px;
+}
+
+/* 删除分组对话框内容区域 */
+.group-delete-dialog-content {
+    background-color: #ffffff !important;
+}
+
+/* 删除分组列表样式 */
+.group-delete-list {
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid #dcdfe6;
+    border-radius: 4px;
+    padding: 8px;
+    background-color: #ffffff;
+}
+
+.group-delete-item {
+    display: flex;
+    align-items: center;
+    padding: 12px;
+    margin-bottom: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    background-color: #fff;
+}
+
+.group-delete-item:hover {
+    background-color: #f5f7fa;
+}
+
+.group-delete-item:last-child {
+    margin-bottom: 0;
+}
+
+/* 删除分组对话框中的复选框样式，与表格复选框一致 */
+.group-delete-item .el-checkbox {
+    padding: 5px;
+}
+
+.group-delete-item .el-checkbox__inner {
+    width: 18px !important;
+    height: 18px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.group-delete-item .el-checkbox__inner::after {
+    width: 5px !important;
+    height: 10px !important;
+    left: 50% !important;
+    top: 50% !important;
+    transform: translate(-50%, -60%) rotate(45deg) !important;
+    border-width: 2px !important;
+    position: absolute !important;
+}
+
+.group-delete-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin: 0 12px;
+    flex-shrink: 0;
+}
+
+.group-delete-name {
+    flex: 1;
+    font-size: 14px;
+    color: #303133;
+}
+
+.group-delete-count {
+    font-size: 13px;
+    color: #909399;
+    margin-left: 8px;
+}
+
+.group-delete-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: #909399;
+    font-size: 14px;
+}
+
+/* 复选框样式优化 */
+.el-table .el-checkbox__inner {
+    width: 18px !important;
+    height: 18px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.el-table .el-checkbox__inner::after {
+    width: 5px !important;
+    height: 10px !important;
+    left: 50% !important;
+    top: 50% !important;
+    transform: translate(-50%, -60%) rotate(45deg) !important;
+    border-width: 2px !important;
+    position: absolute !important;
+}
+
+/* 增大复选框点击区域 */
+.el-table .el-checkbox {
+    padding: 5px;
+}
+
+/* 复选框容器居中 */
+.el-table .el-table-column--selection .cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 分页 */
+.pagination {
+    padding: 18px 20px;
+    background: #f8fafc;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.pagination-left {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    font-size: 13px;
+    color: #64748b;
+}
+
+/* 自定义分页器"Go to"文字 */
+.el-pagination .el-pagination__jump {
+    margin-left: 20px;
+}
+
+.el-pagination .el-pagination__jump::before {
+    content: '跳转';
+    margin-right: 8px;
+}
+
+/* 隐藏原始的 "Go to" 文字 */
+.el-pagination .el-pagination__jump > span:first-child {
+    display: none;
+}
+
+/* ==================== 邮件对话框 ==================== */
+.email-dialog {
+    height: 900px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+/* ==================== Element Plus 对话框动画优化 ==================== */
+
+/* 方案A：完全禁用动画（最流畅，无闪烁） */
+.el-overlay,
+.el-overlay-dialog,
+.el-dialog,
+.el-dialog__wrapper {
+    transition: none !important;
+    animation: none !important;
+}
+
+/* 如果你想要平滑过渡而不是瞬间显示，可以注释掉上面的代码，使用下面的方案B */
+
+/* 方案B：自定义平滑过渡（有动画但更流畅）
+.el-overlay {
+    transition: opacity 0.2s ease-out !important;
+}
+
+.el-dialog {
+    transition: opacity 0.2s ease-out, transform 0.2s ease-out !important;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+}
+
+.el-overlay-dialog {
+    transition: opacity 0.2s ease-out !important;
+}
+
+.el-dialog__wrapper {
+    transition: opacity 0.2s ease-out !important;
+}
+*/
+
+/* GPU 加速优化 */
+.email-dialog-wrapper .el-dialog {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    will-change: auto;
+}
+
+/* 整个对话框浅蓝色背景 - #eff6ff */
+.el-dialog {
+    background: #eff6ff !important;
+}
+
+.el-dialog__header {
+    background: #eff6ff !important;
+}
+
+.el-dialog__body {
+    background: #eff6ff !important;
+}
+
+.email-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.email-card {
+    padding: 15px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.email-card:hover {
+    background: #f9fafb;
+    border-color: #3b82f6;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+}
+
+.email-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.email-subject {
+    flex: 1;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.email-time {
+    font-size: 12px;
+    color: #64748b;
+}
+
+.email-from {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #64748b;
+    margin-bottom: 8px;
+}
+
+.email-preview {
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 50px;
+    color: #64748b;
+}
+
+/* 邮件详情 */
+.email-detail {
+    padding: 10px 0;
+}
+
+.detail-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+.detail-row strong {
+    min-width: 70px;
+    color: #1e293b;
+}
+
+/* iframe 容器 */
+.email-iframe-container {
+    width: 100%;
+    background: #ffffff;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    overflow: hidden;
+}
+
+.email-iframe {
+    width: 100%;
+    height: 750px;
+    border: none;
+    display: block;
+    background: #ffffff;
+}
+
+/* 保留旧的 .detail-body 样式作为备用 */
+.detail-body {
+    background: #ffffff;
+    padding: 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.6;
+    max-height: 600px;
+    overflow-y: auto;
+    border: 1px solid #e5e7eb;
+    color: #1e293b;
+}
+
+/* 邮件内容 HTML 元素样式 */
+.detail-body p {
+    margin: 0 0 12px 0;
+}
+
+.detail-body h1, .detail-body h2, .detail-body h3, 
+.detail-body h4, .detail-body h5, .detail-body h6 {
+    margin: 16px 0 12px 0;
+    color: #1e293b;
+    font-weight: 600;
+}
+
+.detail-body h1 { font-size: 24px; }
+.detail-body h2 { font-size: 20px; }
+.detail-body h3 { font-size: 18px; }
+.detail-body h4 { font-size: 16px; }
+.detail-body h5 { font-size: 14px; }
+.detail-body h6 { font-size: 13px; }
+
+.detail-body a {
+    color: #3b82f6;
+    text-decoration: none;
+}
+
+.detail-body a:hover {
+    text-decoration: underline;
+}
+
+.detail-body img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+    margin: 10px 0;
+}
+
+.detail-body table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 13px;
+}
+
+.detail-body table td, .detail-body table th {
+    border: 1px solid #e5e7eb;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+.detail-body table th {
+    background-color: #f9fafb;
+    font-weight: 600;
+}
+
+.detail-body ul, .detail-body ol {
+    margin: 12px 0;
+    padding-left: 24px;
+}
+
+.detail-body li {
+    margin: 4px 0;
+}
+
+.detail-body blockquote {
+    margin: 12px 0;
+    padding: 12px 16px;
+    border-left: 4px solid #3b82f6;
+    background-color: #f9fafb;
+    color: #64748b;
+}
+
+.detail-body code {
+    background-color: #f1f5f9;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+}
+
+.detail-body pre {
+    background-color: #f1f5f9;
+    padding: 12px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 12px 0;
+}
+
+.detail-body pre code {
+    background-color: transparent;
+    padding: 0;
+}
+
+.detail-body hr {
+    border: none;
+    border-top: 1px solid #e5e7eb;
+    margin: 16px 0;
+}
+
+/* 确保邮件内容中的样式不会破坏布局 */
+.detail-body * {
+    max-width: 100%;
+    word-wrap: break-word;
+}
+
+/* ==================== 响应式 ==================== */
+@media (max-width: 1200px) {
+    .sidebar {
+        width: 200px !important;
+    }
+    
+    .page-header h1 {
+        font-size: 24px;
+    }
+    
+    .toolbar {
+        flex-wrap: wrap;
+    }
+}
+
+/* ==================== 自定义滚动条 ==================== */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* ==================== 加载动画 ==================== */
+.is-loading {
+    animation: rotating 2s linear infinite;
+}
+
+@keyframes rotating {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* 加载状态优化 */
+.email-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    color: #909399;
+    animation: fadeIn 0.3s ease;
+}
+
+.email-loading p {
+    margin-top: 16px;
+    font-size: 14px;
+}
+
+/* ==================== 邮件对话框 - 左右分栏布局 ==================== */
+.email-dialog-container {
+    display: flex;
+    flex-direction: column;
+    height: 70vh;
+    max-height: 700px;
+}
+
+.email-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.email-split-view {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+}
+
+/* 左侧邮件列表面板 */
+.email-list-panel {
+    width: 350px;
+    border-right: 1px solid #dadce0;
+    display: flex;
+    flex-direction: column;
+    background: #ffffff;
+}
+
+.email-list-header {
+    padding: 16px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #f8f9fa;
+}
+
+.email-count {
+    margin-top: 12px;
+    font-size: 13px;
+    color: #5f6368;
+}
+
+.email-loading {
+    text-align: center;
+    padding: 60px 20px;
+    color: #5f6368;
+}
+
+.email-list-items {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.email-list-item {
+    padding: 16px;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    opacity: 1;
+}
+
+.email-list-item:hover {
+    background: #f1f3f4;
+}
+
+/* 邮件列表淡入动画 */
+.email-list-items {
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.email-list-item.active {
+    background: #e8f0fe;
+    border-left: 3px solid #1a73e8;
+}
+
+.email-list-item-sender {
+    font-weight: 500;
+    font-size: 14px;
+    color: #202124;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.email-list-item-subject {
+    font-size: 13px;
+    color: #5f6368;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.email-list-item-preview {
+    font-size: 12px;
+    color: #80868b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+}
+
+.email-list-item-date {
+    font-size: 12px;
+    color: #5f6368;
+}
+
+/* 右侧邮件详情面板 */
+.email-detail-panel {
+    flex: 1;
+    overflow-y: auto;
+    background: #ffffff;
+}
+
+.email-detail-empty {
+    text-align: center;
+    padding: 100px 20px;
+    color: #80868b;
+}
+
+.email-detail-content {
+    padding: 24px;
+}
+
+.email-detail-header {
+    border-bottom: 1px solid #e0e0e0;
+    padding-bottom: 20px;
+    margin-bottom: 24px;
+}
+
+.email-detail-subject {
+    font-size: 20px;
+    font-weight: 500;
+    color: #202124;
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+
+.email-detail-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 13px;
+}
+
+.meta-row {
+    display: flex;
+    align-items: flex-start;
+}
+
+.meta-label {
+    font-weight: 500;
+    color: #5f6368;
+    min-width: 70px;
+    flex-shrink: 0;
+}
+
+.meta-value {
+    color: #202124;
+    flex: 1;
+    word-break: break-word;
+}
+
+.email-detail-body {
+    background: white;
+    line-height: 1.6;
+    color: #202124;
+    font-size: 14px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #80868b;
+}
+
